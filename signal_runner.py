@@ -36,7 +36,7 @@ HOLD_DAYS = 20
 REPO_LABEL = "stanleyim/new"
 
 KIS_BASE = "https://openapi.koreainvestment.com:9443"
-KIS_RPS = 15  # 초당 호출 (안전 마진)
+KIS_RPS = 10  # 초당 호출 (안전 마진)
 
 # ===== Telegram =====
 def send_telegram(text):
@@ -74,6 +74,7 @@ class KisClient:
         self.token, self.app_key, self.app_secret = get_kis_token()
         self.last_call = 0.0
         self.min_interval = 1.0 / KIS_RPS
+        self.session = requests.Session()
 
     def _throttle(self):
         elapsed = time.time() - self.last_call
@@ -81,7 +82,8 @@ class KisClient:
             time.sleep(self.min_interval - elapsed)
         self.last_call = time.time()
 
-    def _get(self, path, tr_id, params, retries=3):
+    def _get(self, path, tr_id, params, retries=5):
+        last_exc = None
         for attempt in range(retries):
             self._throttle()
             headers = {
@@ -91,16 +93,26 @@ class KisClient:
                 "appsecret": self.app_secret,
                 "tr_id": tr_id
             }
-            r = requests.get(f"{KIS_BASE}{path}", headers=headers, params=params, timeout=30)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("rt_cd") == "0":
+            try:
+                r = self.session.get(f"{KIS_BASE}{path}", headers=headers, params=params, timeout=30)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("rt_cd") == "0":
+                        return data
+                    if data.get("msg_cd") == "EGW00201":  # rate limit
+                        time.sleep(2.0)
+                        continue
                     return data
-                if data.get("msg_cd") == "EGW00201":  # rate limit
-                    time.sleep(1.0)
-                    continue
-                return data
-            time.sleep(0.5)
+                else:
+                    time.sleep(1.0 + attempt)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ChunkedEncodingError) as e:
+                last_exc = e
+                # Session 재생성
+                self.session = requests.Session()
+                time.sleep(2.0 + attempt * 2)
+                continue
+        if last_exc:
+            print(f"[WARN] {path} {params.get('FID_INPUT_ISCD','?')}: {last_exc}")
         return None
 
     def get_ohlcv(self, ticker, start_date, end_date):
