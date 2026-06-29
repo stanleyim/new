@@ -301,7 +301,8 @@ def compute_features(ohlcv, flow, short):
         g["거래대금_20ma"] = g["거래대금"].rolling(20).mean()
         return g
 
-    df = df.groupby("ticker", group_keys=False).apply(per_ticker)
+    # ticker 보존을 위해 reset_index 후 처리
+    df = df.groupby("ticker", group_keys=True).apply(per_ticker, include_groups=False).reset_index(level=0)
 
     df["SIG1"] = (df["is_breakout_20"] & (df["vol_surge"]>2.0) & (df["frgn_z"]>2.0)).astype(int)
     df["SIG2"] = (df["is_breakout_60"] & (df["vol_surge"]>2.0)).astype(int)
