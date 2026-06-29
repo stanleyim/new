@@ -9,6 +9,10 @@ import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# KRX 로그인 우회 (GH Actions IP 차단 회피)
+_krx_id = os.environ.pop("KRX_ID", None)
+_krx_pw = os.environ.pop("KRX_PW", None)
+
 import pandas as pd
 import numpy as np
 import requests
@@ -51,14 +55,7 @@ def send_telegram(text):
 
 # ===== 데이터 fetch =====
 def fetch_and_append():
-    """기존 parquet 마지막 날짜 이후 데이터를 append"""
-    # KRX 로그인 (pykrx 일부 함수 필요)
-    krx_id = os.environ.get("KRX_ID")
-    krx_pw = os.environ.get("KRX_PW")
-    if krx_id and krx_pw:
-        os.environ["KRX_ID"] = krx_id
-        os.environ["KRX_PW"] = krx_pw
-
+    """기존 parquet 마지막 날짜 이후 데이터를 append (KRX 로그인 없이)"""
     universe = pd.read_parquet(UNIVERSE_PATH)
     ohlcv_old = pd.read_parquet(OHLCV_PATH)
     flow_old  = pd.read_parquet(FLOW_PATH)
