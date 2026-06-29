@@ -2,8 +2,8 @@ name: Daily Signal Run
 
 on:
   schedule:
-    - cron: '0 11 * * 1-5'  # 평일 KST 20:00 (UTC 11:00)
-  workflow_dispatch:  # 수동 트리거
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   run-signal:
@@ -12,16 +12,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install deps
         run: pip install -r requirements.txt
       - name: Run signal
         env:
-          KRX_ID: ${{ secrets.KRX_ID }}
-          KRX_PW: ${{ secrets.KRX_PW }}
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python signal_runner.py
@@ -30,5 +29,5 @@ jobs:
           git config user.email "stanleyim@gmail.com"
           git config user.name "stanleyim"
           git add data/ output/
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto: signal $(date -u +%Y-%m-%d)"
+          git diff --quiet && git diff --staged --quiet || git commit -m "Auto: $(date -u +%Y-%m-%d)"
           git push
