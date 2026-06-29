@@ -61,9 +61,15 @@ def fetch_and_append():
     flow_old  = pd.read_parquet(FLOW_PATH)
     short_old = pd.read_parquet(SHORT_PATH)
 
-    last_date = pd.to_datetime(ohlcv_old["date"]).max()
+    # 3개 데이터 중 가장 이른 마지막 날짜 = 시작점
+    last_ohlcv = pd.to_datetime(ohlcv_old["date"]).max()
+    last_flow  = pd.to_datetime(flow_old["date"]).max()
+    last_short = pd.to_datetime(short_old["date"]).max()
+    last_date = min(last_ohlcv, last_flow, last_short)
     today = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
     start_date = last_date + pd.Timedelta(days=1)
+    print(f"last_ohlcv={last_ohlcv.date()}, last_flow={last_flow.date()}, last_short={last_short.date()}")
+    print(f"fetch from {start_date.date()} to {today.date()}")
 
     if start_date > today:
         print(f"이미 최신 ({last_date.date()}), fetch 스킵")
