@@ -502,6 +502,18 @@ def main():
     target_date_str = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d")
     target_date = pd.to_datetime(target_date_str)
     print(f"=== 실행: {target_date_str} ===")
+    
+    # 한국 공휴일 / 주말 체크 (한국 시장 휴장일)
+    import holidays
+    kr_holidays = holidays.SouthKorea()
+    is_weekend = target_date.weekday() >= 5
+    is_holiday = target_date.date() in kr_holidays
+    if is_weekend or is_holiday:
+        reason = "주말" if is_weekend else f"공휴일 ({kr_holidays.get(target_date.date())})"
+        msg = f"📊 {REPO_LABEL}\n{target_date_str}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
+        print(msg)
+        send_telegram(msg)
+        return
 
     print("\n[1] KIS 데이터 fetch...")
     ohlcv, flow, short, universe = fetch_and_append()
