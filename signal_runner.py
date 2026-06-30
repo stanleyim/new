@@ -426,8 +426,11 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
     n_open = len(open_h)
     can_add = K_MAX - n_open
     new_added = []
+    # 이미 보유 중인 ticker 제외 (중복 방지)
+    open_tickers = {h["ticker"] for h in open_h}
     if can_add > 0 and len(signals) >= N_PICK_MIN:
-        for s in signals[:can_add]:
+        signals_dedup = [s for s in signals if s["ticker"] not in open_tickers]
+        for s in signals_dedup[:can_add]:
             new_added.append({
                 "entry_date": str(target_date),
                 "ticker": s["ticker"],
