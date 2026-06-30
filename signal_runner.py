@@ -382,13 +382,24 @@ def load_results():
 def save_results(results):
     RESULTS_PATH.write_text(json.dumps(results, indent=2, ensure_ascii=False, default=str))
 
-def update_holdings(holdings, df, target_date, signals):
+def update_holdings(holdings, df, target_date, signals, trade_dates):
     closed, open_h = [], []
     target_d = pd.to_datetime(target_date)
+    # trade_dates = 정렬된 거래일 list
+    date_idx = {d: i for i, d in enumerate(trade_dates)}
+    
     for h in holdings:
         entry_date = pd.to_datetime(h["entry_date"])
-        days_held = (target_d - entry_date).days
-        if days_held >= 28:
+        # T+1 = entry_date 다음 거래일에 매수 → +20영업일 후 종가 매도
+        # 즉, entry_date 거래일 인덱스 + 21 = 종결일 (T+1 매수 + 20일 보유)
+        if entry_date in date_idx and target_d in date_idx:
+            entry_i = date_idx[entry_date]
+            target_i = date_idx[target_d]
+            days_held = target_i - entry_i  # 영업일 카운트
+        else:
+            days_held = (target_d - entry_date).days  # fallback
+        
+        if days_held >= 21:  # T+1 매수 후 T+20 종가 도달 = entry_date에서 21영업일
             closed.append(h)
         else:
             row = df[(df["ticker"]==h["ticker"]) & (df["date"]==target_d)]
@@ -397,6 +408,7 @@ def update_holdings(holdings, df, target_date, signals):
                 h["current_price"] = cur_price
                 h["current_ret"] = cur_price / h["entry_price"] - 1 if h.get("entry_price") else None
                 h["days_held"] = days_held
+                h["bdays_remaining"] = max(0, 21 - days_held)
             open_h.append(h)
 
     n_open = len(open_h)
@@ -411,7 +423,7 @@ def update_holdings(holdings, df, target_date, signals):
                 "signal_score": float(s["signal_score"]),
                 "n_signals": int(s["n_signals"]),
                 "entry_price": None,  # T+1 시가에 결정됨
-                "exit_date_planned": str((target_d + pd.Timedelta(days=28)).date()),
+                "exit_date_planned": str(trade_dates[min(date_idx[target_d] + 21, len(trade_dates)-1)].date()) if target_d in date_idx else str((target_d + pd.Timedelta(days=28)).date()),
                 "weight": MAX_WEIGHT,
                 "current_price": None,
                 "current_ret": None,
@@ -512,7 +524,8 @@ def main():
     print("\n[4] 보유 추적...")
     holdings = load_holdings()
     new_for_entry = signals if n_pick_valid else []
-    holdings_after, closed, new_added = update_holdings(holdings, df, signal_date, new_for_entry)
+    trade_dates_list = sorted(df["date"].unique())
+    holdings_after, closed, new_added = update_holdings(holdings, df, signal_date, new_for_entry, trade_dates_list)
     save_holdings(holdings_after)
 
     if closed:
