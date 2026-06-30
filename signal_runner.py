@@ -201,7 +201,7 @@ class KisClient:
                     "date": pd.to_datetime(d, format="%Y%m%d"),
                     "ticker": ticker,
                     "공매도": float(o.get("ssts_cntg_qty",0) or 0),
-                    "short_ratio": float(o.get("ssts_vol_rlim",0) or 0),
+                    "비중": float(o.get("ssts_vol_rlim",0) or 0),
                 })
             except (ValueError, TypeError):
                 continue
