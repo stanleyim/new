@@ -402,6 +402,18 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
         if days_held >= 21:  # T+1 매수 후 T+20 종가 도달 = entry_date에서 21영업일
             closed.append(h)
         else:
+            # entry_price 자동 채움: T+1 시가 = entry_date 다음 영업일 시가
+            if h.get("entry_price") is None and entry_date in date_idx:
+                t1_i = date_idx[entry_date] + 1
+                if t1_i < len(trade_dates):
+                    t1_date = trade_dates[t1_i]
+                    t1_row = df[(df["ticker"]==h["ticker"]) & (df["date"]==t1_date)]
+                    if len(t1_row) > 0:
+                        t1_open = float(t1_row["시가"].iloc[0])
+                        if t1_open > 0:
+                            h["entry_price"] = t1_open
+                            h["entry_t1_date"] = str(t1_date.date())
+
             row = df[(df["ticker"]==h["ticker"]) & (df["date"]==target_d)]
             if len(row) > 0:
                 cur_price = float(row["종가"].iloc[0])
