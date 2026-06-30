@@ -273,6 +273,14 @@ def fetch_and_append():
     ohlcv = merge_save(ohlcv_old, new_ohlcv, OHLCV_PATH)
     flow  = merge_save(flow_old, new_flow, FLOW_PATH)
     short = merge_save(short_old, new_short, SHORT_PATH)
+    
+    # universe.name으로 결측 name 채움 (KIS fetch에서 name 누락)
+    name_map = dict(zip(universe["ticker"], universe["name"]))
+    for d, p in [(ohlcv, OHLCV_PATH), (flow, FLOW_PATH), (short, SHORT_PATH)]:
+        if d["name"].isna().any():
+            d["name"] = d["name"].fillna(d["ticker"].map(name_map))
+            d.to_parquet(p, index=False)
+    
     return ohlcv, flow, short, universe
 
 # ===== Feature 계산 (기존과 동일) =====
