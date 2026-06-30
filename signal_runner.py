@@ -178,6 +178,27 @@ class KisClient:
                 continue
         return rows
 
+    def check_safety(self, ticker):
+        """종목 위험 상태 확인. 위험 = True, 안전 = False"""
+        data = self._get(
+            "/uapi/domestic-stock/v1/quotations/inquire-price",
+            "FHKST01010100",
+            {"FID_COND_MRKT_DIV_CODE":"J","FID_INPUT_ISCD":ticker}
+        )
+        if data is None or "output" not in data:
+            return True, "API 응답 없음"
+        o = data["output"]
+        warnings = []
+        if o.get("temp_stop_yn") == "Y": warnings.append("거래정지")
+        if o.get("mang_issu_cls_code") == "Y": warnings.append("관리종목")
+        if o.get("invt_caful_yn") == "Y": warnings.append("투자주의")
+        if o.get("sltr_yn") == "Y": warnings.append("정리매매")
+        if o.get("mrkt_warn_cls_code","00") != "00": warnings.append(f"시장경고({o.get('mrkt_warn_cls_code')})")
+        if o.get("short_over_yn") == "Y": warnings.append("공매도과열")
+        if warnings:
+            return True, ", ".join(warnings)
+        return False, "안전"
+
     def get_short(self, ticker, start_date, end_date):
         """공매도 일별"""
         data = self._get(
@@ -469,6 +490,22 @@ def main():
         signal_date = target_date
 
     signals = select_signals(df, signal_date)
+    print(f"신호 산출: {len(signals)} 종목")
+
+    # 위험 종목 필터링 (신호 발생 종목만 추가 검증)
+    if signals:
+        print("위험 종목 검증...")
+        kis_check = KisClient()
+        safe_signals = []
+        for s in signals:
+            is_risky, reason = kis_check.check_safety(s["ticker"])
+            if is_risky:
+                print(f"  ⚠️ [{s['ticker']}] {s.get('name','?')} 제외: {reason}")
+            else:
+                safe_signals.append(s)
+        signals = safe_signals
+        print(f"위험 필터 후: {len(signals)} 종목")
+
     n_pick_valid = len(signals) >= N_PICK_MIN
     print(f"신호: {len(signals)} (valid={n_pick_valid})")
 
