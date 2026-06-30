@@ -278,6 +278,7 @@ def fetch_and_append():
 
         if (i+1) % 50 == 0:
             print(f"  {i+1}/{len(tickers)}")
+    print(f"  완료: {len(tickers)}/{len(tickers)} 종목")
 
     def merge_save(old, new_rows, path):
         if not new_rows:
