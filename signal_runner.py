@@ -310,8 +310,9 @@ def fetch_and_append():
 def compute_features(ohlcv, flow, short):
     df = ohlcv.merge(flow[["date","ticker","외국인합계","기관합계","개인"]],
                      on=["date","ticker"], how="inner")
-    df = df.merge(short[["date","ticker","공매도","short_ratio"]],
+    df = df.merge(short[["date","ticker","공매도","비중"]],
                   on=["date","ticker"], how="left")
+    df = df.rename(columns={"비중":"short_ratio"})
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["ticker","date"]).reset_index(drop=True)
     df.loc[df["시가"]==0, "시가"] = np.nan
