@@ -1,0 +1,29 @@
+{
+  "signal_date": "2026-07-31",
+  "n_signals": 1,
+  "records": [
+    {
+      "signal_date": "2026-07-31",
+      "ticker": "058610",
+      "name": "에스피지",
+      "signal_score": 6.28,
+      "n_signals": 4,
+      "SIG1": 1,
+      "SIG2": 0,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 1,
+      "SIG6": 1,
+      "SIG7": 0,
+      "cap_class": "중형",
+      "signal_close": 94600.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
