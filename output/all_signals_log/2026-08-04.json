@@ -1,0 +1,29 @@
+{
+  "signal_date": "2026-08-04",
+  "n_signals": 1,
+  "records": [
+    {
+      "signal_date": "2026-08-04",
+      "ticker": "028670",
+      "name": "팬오션",
+      "signal_score": 4.37,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 0,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 1,
+      "SIG6": 0,
+      "SIG7": 1,
+      "cap_class": "중형",
+      "signal_close": 5640.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
