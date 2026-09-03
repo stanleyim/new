@@ -19,11 +19,11 @@
       "signal_close": 5640.0,
       "virtual_entry_date": "2026-08-05",
       "virtual_entry_price": 5640.0,
-      "virtual_exit_date_planned": null,
-      "virtual_exit_price": null,
-      "gross_ret": null,
-      "net_ret": null,
-      "status": "pending"
+      "virtual_exit_date_planned": "2026-09-03",
+      "virtual_exit_price": 5940.0,
+      "gross_ret": 0.05319148936170204,
+      "net_ret": 0.05113148936170204,
+      "status": "closed"
     }
   ]
 }
