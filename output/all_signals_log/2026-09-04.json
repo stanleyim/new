@@ -1,0 +1,52 @@
+{
+  "signal_date": "2026-09-04",
+  "n_signals": 2,
+  "records": [
+    {
+      "signal_date": "2026-09-04",
+      "ticker": "030530",
+      "name": "원익홀딩스",
+      "signal_score": 4.86,
+      "n_signals": 3,
+      "SIG1": 1,
+      "SIG2": 0,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 0,
+      "SIG6": 1,
+      "SIG7": 0,
+      "cap_class": "중형",
+      "signal_close": 22500.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    },
+    {
+      "signal_date": "2026-09-04",
+      "ticker": "024060",
+      "name": "흥구석유",
+      "signal_score": 4.37,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 0,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 1,
+      "SIG6": 0,
+      "SIG7": 1,
+      "cap_class": "소형",
+      "signal_close": 10820.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
