@@ -1,0 +1,29 @@
+{
+  "signal_date": "2026-09-08",
+  "n_signals": 1,
+  "records": [
+    {
+      "signal_date": "2026-09-08",
+      "ticker": "108490",
+      "name": "로보티즈",
+      "signal_score": 4.53,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 0,
+      "SIG3": 1,
+      "SIG4": 1,
+      "SIG5": 1,
+      "SIG6": 0,
+      "SIG7": 0,
+      "cap_class": "대형",
+      "signal_close": 284000.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
