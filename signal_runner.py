@@ -676,9 +676,14 @@ def main():
             results.append(c)
         save_results(results)
 
-    sig_path = SIG_DIR / f"{target_date_str}.json"
+    # signal_date 기준으로 저장 (target_date_str은 실행 시각의 wall-clock일 뿐이라
+    # cron 지연이 자정을 넘기면 실제 데이터 날짜와 어긋남 → 반드시 signal_date_str 사용)
+    signal_date_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
+
+    sig_path = SIG_DIR / f"{signal_date_str}.json"
     sig_path.write_text(json.dumps({
-        "date": target_date_str,
+        "date": signal_date_str,
+        "run_at_kst": target_date_str,
         "signal_date": str(signal_date),
         "signals": [{k:(str(v) if isinstance(v,(pd.Timestamp,np.generic)) else v) for k,v in s.items() if k not in ["high_20d","high_60d","hl_range"]} for s in signals],
         "n_pick_valid": n_pick_valid,
@@ -689,8 +694,6 @@ def main():
     print(f"저장: {sig_path}")
 
     # all_signals_log: 매매 여부 무관, 모든 신호 종목의 T+20 가상 결과 추적용
-    # signal_date 기준으로 저장 (target_date와 다를 수 있음: 휴장/데이터 미도달 시)
-    signal_date_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
     trade_dates_all = sorted(df["date"].unique())
     date_to_idx = {d: i for i, d in enumerate(trade_dates_all)}
     sig_d_idx = date_to_idx.get(pd.Timestamp(signal_date))
@@ -802,7 +805,7 @@ def main():
         print(f"all_signals_log update: {updated_count}개 파일")
 
     print("\n[5] Telegram...")
-    msg = format_message(target_date_str, signals, holdings_after, closed, new_added, n_pick_valid)
+    msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid)
     send_telegram(msg)
     print(msg)
     print("\n=== 완료 ===")
