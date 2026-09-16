@@ -471,8 +471,13 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
 
     return open_h + new_added, closed, new_added
 
+def weekday_kr(date_str):
+    """'YYYY-MM-DD' -> '(월)'~'(일)' 한글 요일 라벨"""
+    wd = ["월","화","수","목","금","토","일"]
+    return f"({wd[pd.Timestamp(date_str).weekday()]})"
+
 def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid):
-    lines = [f"📊 {REPO_LABEL}", f"{target_date} (20:00 산출)", ""]
+    lines = [f"📊 {REPO_LABEL}", f"{target_date} {weekday_kr(target_date)} (20:00 산출)", ""]
 
     if len(signals) > 0:
         lines.append(f"[매수 후보] {len(signals)}개")
@@ -530,7 +535,7 @@ def main():
     is_holiday = target_date.date() in kr_holidays
     if is_weekend or is_holiday:
         reason = "주말" if is_weekend else f"공휴일 ({kr_holidays.get(target_date.date())})"
-        msg = f"📊 {REPO_LABEL}\n{target_date_str}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
+        msg = f"📊 {REPO_LABEL}\n{target_date_str} {weekday_kr(target_date_str)}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
         print(msg)
         send_telegram(msg)
         return
@@ -618,7 +623,7 @@ def main():
         }, indent=2, ensure_ascii=False, default=str))
 
         # Telegram 소급 알림
-        past_msg_lines = [f"📊 [소급] {REPO_LABEL}", f"{past_d_str} 신호 (재산출)", ""]
+        past_msg_lines = [f"📊 [소급] {REPO_LABEL}", f"{past_d_str} {weekday_kr(past_d_str)} 신호 (재산출)", ""]
         if past_signals:
             past_msg_lines.append(f"[매수 후보] {len(past_signals)}개")
             for i, s in enumerate(past_signals, 1):
