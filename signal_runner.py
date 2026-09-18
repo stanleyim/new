@@ -547,13 +547,28 @@ def main():
     df = compute_features(ohlcv, flow, short)
     df = add_cap_class(df, universe)
 
+    # signal_date를 소급 검사보다 먼저 확정한다.
+    # target_date_str은 실행 시각의 wall-clock일 뿐이라, cron 지연이 자정을
+    # 넘기면 (예: KST 00:2x 실행) target_date가 아직 데이터 없는 "다음 날"이
+    # 되어버리고, 그 결과 오늘 처리할 signal_date 본인이 소급 검사의
+    # "과거 누락일" 범위에 잘못 포함되어 중복 알림이 발생한다.
+    # → signal_date를 기준으로 소급 범위를 잘라야 이 문제가 생기지 않는다.
+    available_dates = sorted(df["date"].unique())
+    if target_date not in available_dates:
+        signal_date = available_dates[-1]
+        print(f"오늘 데이터 없음, 직전: {signal_date}")
+    else:
+        signal_date = target_date
+
     # ===== D: 최근 3영업일 소급 신호 산출 =====
     print("\n[2-1] 소급 신호 검사 (최근 3영업일)...")
     trade_dates_all_early = sorted(df["date"].unique())
     date_to_idx_early = {d: i for i, d in enumerate(trade_dates_all_early)}
-    target_d_norm = pd.Timestamp(target_date_str)
+    target_d_norm = pd.Timestamp(signal_date)
 
-    # 오늘 이전의 최근 3영업일 뽑기
+    # signal_date(오늘 처리 대상) 이전의 최근 3영업일만 뽑는다.
+    # (signal_date 본인은 반드시 제외 — 아직 all_signals_log 파일이
+    # 생성되기 전이므로, 여기 포함되면 "실행 실패"로 오탐된다.)
     past_dates = [d for d in trade_dates_all_early if d < target_d_norm]
     recent_3 = past_dates[-3:] if len(past_dates) >= 3 else past_dates
 
@@ -641,12 +656,7 @@ def main():
         send_telegram(past_msg)
 
     print(f"\n[3] 신호 산출 ({target_date_str})...")
-    available_dates = sorted(df["date"].unique())
-    if target_date not in available_dates:
-        signal_date = available_dates[-1]
-        print(f"오늘 데이터 없음, 직전: {signal_date}")
-    else:
-        signal_date = target_date
+    # signal_date는 위 [2] 직후에 이미 확정됨 (소급 검사가 이 값을 써야 하므로)
 
     signals = select_signals(df, signal_date)
     print(f"신호 산출: {len(signals)} 종목")
