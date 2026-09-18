@@ -1,0 +1,52 @@
+{
+  "signal_date": "2026-09-18",
+  "n_signals": 2,
+  "records": [
+    {
+      "signal_date": "2026-09-18",
+      "ticker": "042370",
+      "name": "비츠로테크",
+      "signal_score": 4.359999999999999,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 1,
+      "SIG3": 0,
+      "SIG4": 0,
+      "SIG5": 0,
+      "SIG6": 1,
+      "SIG7": 1,
+      "cap_class": "소형",
+      "signal_close": 11630.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    },
+    {
+      "signal_date": "2026-09-18",
+      "ticker": "456010",
+      "name": "아이씨티케이",
+      "signal_score": 4.359999999999999,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 1,
+      "SIG3": 0,
+      "SIG4": 0,
+      "SIG5": 0,
+      "SIG6": 1,
+      "SIG7": 1,
+      "cap_class": "소형",
+      "signal_close": 22350.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
