@@ -20,7 +20,7 @@ jobs:
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
         run: |
           cat > t.py <<'PYEOF'
-          import os, time, requests
+          import os, time, random, collections, requests
 
           BASE = "https://openapi.koreainvestment.com:9443"
           KEY, SEC = os.environ.get("KIS_APP_KEY"), os.environ.get("KIS_APP_SECRET")
@@ -32,70 +32,51 @@ jobs:
           if not tok:
               raise SystemExit(f"토큰 발급 실패: {r.status_code} {r.text[:200]}")
 
-          def call(path, tr_id, params, tr_cont=""):
-              h = {"content-type": "application/json", "authorization": f"Bearer {tok}",
-                   "appkey": KEY, "appsecret": SEC, "tr_id": tr_id, "custtype": "P", "tr_cont": tr_cont}
-              time.sleep(0.25)
-              resp = requests.get(BASE + path, headers=h, params=params, timeout=30)
-              try:
-                  return resp.json(), resp.headers.get("tr_cont", "")
-              except Exception:
-                  return {"rt_cd": "HTTP" + str(resp.status_code), "msg1": resp.text[:120]}, ""
+          H = {"content-type": "application/json", "authorization": f"Bearer {tok}",
+               "appkey": KEY, "appsecret": SEC, "tr_id": "CTPF1002R", "custtype": "P"}
+          stat = {"calls": 0, "retry": 0}
 
-          def inv(tk, d, max_pages=40):
-              rows, cont, pages, msg = [], "", 0, ""
-              while pages < max_pages:
-                  j, hc = call("/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
-                               {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": tk, "FID_INPUT_DATE_1": d,
-                                "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""}, cont)
-                  pages += 1
-                  msg = f"{j.get('rt_cd')} {j.get('msg1')}"
-                  o2 = j.get("output2") or []
-                  rows += [x for x in o2 if x.get("stck_bsop_date")]
-                  if hc in ("M", "F") and o2:
-                      cont = "N"
-                  else:
-                      break
-              ds = sorted(x["stck_bsop_date"] for x in rows)
-              print("INV", tk, "date", d, "| msg", msg, "| pages", pages, "| rows", len(rows), "|", (ds[0], ds[-1]) if ds else "-")
-              if rows:
-                  x = rows[0]
-                  print("   sample", {k: x.get(k) for k in ("stck_bsop_date", "frgn_ntby_tr_pbmn", "orgn_ntby_tr_pbmn", "prsn_ntby_tr_pbmn")})
-
-          for tk, d in [("117930", "20161230"), ("117930", "20140102"), ("005930", "20140102"), ("005930", "20060102")]:
-              try:
-                  inv(tk, d)
-              except Exception as e:
-                  print("INV", tk, d, "ERR", repr(e)[:150])
-
-          for tk in ["117930", "037730", "005930"]:
-              try:
-                  j, _ = call("/uapi/domestic-stock/v1/quotations/search-stock-info", "CTPF1002R", {"PRDT_TYPE_CD": "300", "PDNO": tk})
+          def info(code):
+              for attempt in range(3):
+                  time.sleep(0.1)
+                  stat["calls"] += 1
+                  try:
+                      resp = requests.get(BASE + "/uapi/domestic-stock/v1/quotations/search-stock-info", headers=H,
+                                          params={"PRDT_TYPE_CD": "300", "PDNO": code}, timeout=30)
+                      j = resp.json()
+                  except Exception as e:
+                      return None, ("EXC", "", repr(e)[:60])
+                  if j.get("msg_cd") == "EGW00201":
+                      stat["retry"] += 1
+                      time.sleep(1.0)
+                      continue
                   o = j.get("output") or {}
-                  keep = {k: v for k, v in o.items() if any(s in k for s in ("abol", "lstg", "abrv_name", "std_pdno"))}
-                  print("INFO", tk, "| msg", j.get("rt_cd"), j.get("msg1"), "|", keep)
-              except Exception as e:
-                  print("INFO", tk, "ERR", repr(e)[:150])
+                  if j.get("rt_cd") == "0" and o.get("prdt_abrv_name"):
+                      return o, None
+                  return None, (j.get("rt_cd"), j.get("msg_cd"), (j.get("msg1") or "")[:40])
+              return None, ("RATE", "", "")
 
-          for f, t in [("20140101", "20140331"), ("20160101", "20160331")]:
-              try:
-                  j, hc = call("/uapi/domestic-stock/v1/ksdinfo/list-info", "HHKDB669107C0", {"SHT_CD": "", "T_DT": t, "F_DT": f, "CTS": ""})
-                  o1 = j.get("output1") or []
-                  if not isinstance(o1, list):
-                      o1 = [o1]
-                  print("LIST", f, t, "| msg", j.get("rt_cd"), j.get("msg1"), "| rows", len(o1), "| cont", hc)
-                  for x in o1[:3]:
-                      print("   ", {k: x.get(k) for k in ("list_dt", "sht_cd", "isin_name", "stk_kind", "issue_type")})
-              except Exception as e:
-                  print("LIST", f, t, "ERR", repr(e)[:150])
+          def run(label, codes):
+              hits, miss = [], collections.Counter()
+              t0 = time.time()
+              for c in codes:
+                  o, err = info(c)
+                  if o:
+                      hits.append((c, o.get("prdt_abrv_name"), o.get("lstg_abol_dt") or "-",
+                                   o.get("scts_mket_lstg_dt") or o.get("kosdaq_mket_lstg_dt") or "-"))
+                  else:
+                      miss[err] += 1
+              dt = time.time() - t0
+              print(f"[{label}] codes {len(codes)} | hits {len(hits)} | {dt:.0f}s | {len(codes)/max(dt,0.01):.1f} calls/s")
+              print("   miss types:", dict(miss))
+              for h in hits:
+                  print("   HIT", h)
 
-          try:
-              j, _ = call("/uapi/domestic-stock/v1/quotations/daily-short-sale", "FHPST04830000",
-                          {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": "117930", "FID_INPUT_DATE_1": "20160101", "FID_INPUT_DATE_2": "20161230"})
-              o2 = [x for x in (j.get("output2") or []) if x.get("stck_bsop_date")]
-              ds = sorted(x["stck_bsop_date"] for x in o2)
-              print("SHORT 117930 | msg", j.get("rt_cd"), j.get("msg1"), "| rows", len(o2), "|", (ds[0], ds[-1]) if ds else "-")
-          except Exception as e:
-              print("SHORT ERR", repr(e)[:150])
+          o, _ = info("005930")
+          print("KEYS", sorted(o.keys()) if o else None)
+          run("known", ["005930", "117930", "037730", "036360", "038120"])
+          run("seq 005000-005990", [f"{n:06d}" for n in range(5000, 6000, 10)])
+          run("random", [f"{n:06d}" for n in sorted(random.Random(1).sample(range(0, 1000000, 10), 100))])
+          print("total calls", stat["calls"], "rate-limit retries", stat["retry"])
           PYEOF
           python t.py
