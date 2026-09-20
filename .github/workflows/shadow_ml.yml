@@ -1,0 +1,36 @@
+name: Shadow ML Record
+
+on:
+  workflow_run:
+    workflows: ["Daily Signal Run"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shadow-ml
+  cancel-in-progress: false
+
+jobs:
+  record:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install -r requirements.txt "pandas==2.2.3" "scikit-learn==1.8.0"
+      - name: Record ML scores
+        run: python shadow_ml.py
+      - name: Commit results
+        run: |
+          git config user.email "imroetaeck@gmail.com"
+          git config user.name "stanleyim"
+          git add output/shadow_ml/
+          git diff --staged --quiet || git commit -m "Shadow ML: $(date -u +%Y-%m-%d)"
+          git pull --rebase
+          git push
