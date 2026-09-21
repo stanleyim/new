@@ -1,0 +1,52 @@
+{
+  "signal_date": "2026-09-21",
+  "n_signals": 2,
+  "records": [
+    {
+      "signal_date": "2026-09-21",
+      "ticker": "036540",
+      "name": "SFA반도체",
+      "signal_score": 7.92,
+      "n_signals": 5,
+      "SIG1": 1,
+      "SIG2": 1,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 1,
+      "SIG6": 1,
+      "SIG7": 0,
+      "cap_class": "중형",
+      "signal_close": 10610.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    },
+    {
+      "signal_date": "2026-09-21",
+      "ticker": "078350",
+      "name": "한양디지텍",
+      "signal_score": 4.359999999999999,
+      "n_signals": 3,
+      "SIG1": 0,
+      "SIG2": 1,
+      "SIG3": 0,
+      "SIG4": 0,
+      "SIG5": 0,
+      "SIG6": 1,
+      "SIG7": 1,
+      "cap_class": "소형",
+      "signal_close": 28150.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}
