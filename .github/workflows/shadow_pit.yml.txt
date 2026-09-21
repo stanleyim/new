@@ -1,0 +1,61 @@
+name: Shadow PIT Record
+
+on:
+  schedule:
+    - cron: '30 12 * * 1-5'   # 평일 21:30 KST
+    - cron: '30 14 * * 1-5'   # 평일 23:30 KST (자료가 늦게 올라온 날 재시도; 이미 기록했으면 아무것도 안 함)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shadow-pit
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: pit-data
+          path: pitdata
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install "pandas==2.2.3" "numpy==2.2.6" "pyarrow==25.0.1" "scikit-learn==1.8.0" pykrx
+      - name: Collect KRX day(s)
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+        run: python pit_daily.py --data pitdata/pit_data
+      - name: Save data to pit-data branch
+        run: |
+          cd pitdata
+          git config user.email "imroetaeck@gmail.com"
+          git config user.name "stanleyim"
+          git add pit_data/daily
+          if git diff --staged --quiet; then echo "새 데이터 없음"; exit 0; fi
+          git commit -m "PIT daily data $(date -u +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin pit-data && git push origin HEAD:pit-data && break
+            sleep $((RANDOM % 10 + 5))
+          done
+      - name: Record ML scores
+        run: python shadow_pit.py --data pitdata/pit_data --out output/shadow_pit
+      - name: Attach outcomes
+        run: python shadow_pit_outcomes.py --data pitdata/pit_data --out output/shadow_pit
+      - name: Commit results
+        run: |
+          git config user.email "imroetaeck@gmail.com"
+          git config user.name "stanleyim"
+          git add output/shadow_pit/
+          git diff --staged --quiet || git commit -m "Shadow PIT: $(date -u +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && break
+            sleep $((RANDOM % 10 + 5))
+          done
