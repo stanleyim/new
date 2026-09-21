@@ -6,7 +6,7 @@ ML 섀도 포워드 기록기 (기록 전용)
   날짜가 속한 연도 Y 의 예측은 (Y-01-01 - 35일) 이전 데이터만으로 학습한 모델을 쓴다.
   (연 1회 재학습, 파라미터는 백테스트와 동일. 결과를 보고 바꾸지 않는다.)
 - 실행할 때마다 아직 기록되지 않은 거래일의 ML 점수(유동성 필터 통과 전 종목)를 CSV 로 저장한다.
-  파일: output/shadow_ml/YYYY-MM-DD.csv  (컬럼: date,ticker,p,rank,train_cutoff)
+  파일: output/shadow_ml/YYYY-MM-DD.csv  (컬럼: date,ticker,name,p,rank,train_cutoff — name=종목명은 표시용, 2026-09-22 추가)
   ticker 는 문자열(앞자리 0 유지). 읽을 때 dtype={'ticker': str} 지정.
 
 환경변수 (테스트용, 운영에서는 미사용)
@@ -35,6 +35,14 @@ START = os.environ.get('SHADOW_START')
 H = 20            # 보유기간(백테스트의 20일 모델)
 MAX_CATCHUP = 30  # 누락일 따라잡기 상한(거래일)
 MIN_TRAIN_ROWS = 100000
+
+# 종목명(표시용, 예측·평가와 무관). 못 찾으면 빈 칸.
+try:
+    _u = pd.read_parquet(DATA / 'universe.parquet', columns=['ticker', 'name'])
+    NAMES = dict(zip(_u['ticker'].astype(str), _u['name']))
+except Exception as _e:
+    print('종목명 로드 실패(빈 칸으로 기록):', repr(_e)[:100])
+    NAMES = {}
 t0 = time.time()
 
 
@@ -177,6 +185,7 @@ for d in targets:
     tk = X.index[te].get_level_values(1)
     p = m.predict(D.loc[te, dcols])
     out = pd.DataFrame({'date': d.strftime('%Y-%m-%d'), 'ticker': tk.astype(str), 'p': p})
+    out.insert(2, 'name', out['ticker'].map(NAMES).fillna(''))
     out['rank'] = out['p'].rank(ascending=False, method='first').astype(int)
     out = out.sort_values('rank')
     out['train_cutoff'] = cutoff.strftime('%Y-%m-%d')
