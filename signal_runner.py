@@ -527,18 +527,17 @@ def main():
     target_date_str = pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d")
     target_date = pd.to_datetime(target_date_str)
     print(f"=== 실행: {target_date_str} ===")
-    
+
     # 한국 공휴일 / 주말 체크 (한국 시장 휴장일)
+    # 2026-09-24 사고 수정: 여기서 곧바로 종료하지 않는다.
+    # cron 지연으로 wall-clock이 휴장일로 넘어가면, 그 직전 실제 거래일이
+    # 아직 처리되지 않았을 수 있다 (9/23 사례처럼 신호 산출 자체가 누락됨).
+    # → 데이터 fetch와 signal_date 확정을 먼저 하고, 그 signal_date가
+    #    "이미 처리됐는지"를 확인한 뒤에야 최종적으로 휴장/스킵 여부를 판단한다.
     import holidays
     kr_holidays = holidays.SouthKorea()
     is_weekend = target_date.weekday() >= 5
     is_holiday = target_date.date() in kr_holidays
-    if is_weekend or is_holiday:
-        reason = "주말" if is_weekend else f"공휴일 ({kr_holidays.get(target_date.date())})"
-        msg = f"📊 {REPO_LABEL}\n{target_date_str} {weekday_kr(target_date_str)}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
-        print(msg)
-        send_telegram(msg)
-        return
 
     print("\n[1] KIS 데이터 fetch...")
     ohlcv, flow, short, universe = fetch_and_append()
@@ -559,6 +558,8 @@ def main():
         print(f"오늘 데이터 없음, 직전: {signal_date}")
     else:
         signal_date = target_date
+
+    signal_date_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
 
     # ===== D: 최근 3영업일 소급 신호 산출 =====
     print("\n[2-1] 소급 신호 검사 (최근 3영업일)...")
@@ -655,7 +656,23 @@ def main():
         print(past_msg)
         send_telegram(past_msg)
 
-    print(f"\n[3] 신호 산출 ({target_date_str})...")
+    # signal_date가 이미 처리된 날인지 확인 (all_signals_log 파일 존재 여부).
+    # 이걸 봐야 "오늘 진짜 쉬는 날인지, 아니면 밀린 거래일 처리가
+    # 필요한지"를 정확히 판단할 수 있다.
+    signal_all_log_path = ALL_SIGNALS_LOG_DIR / f"{signal_date_str}.json"
+    already_done = signal_all_log_path.exists()
+
+    if already_done:
+        if is_weekend or is_holiday:
+            reason = "주말" if is_weekend else f"공휴일 ({kr_holidays.get(target_date.date())})"
+            msg = f"📊 {REPO_LABEL}\n{target_date_str} {weekday_kr(target_date_str)}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
+            print(msg)
+            send_telegram(msg)
+        else:
+            print(f"{signal_date_str} 이미 처리됨 — 중복 실행 스킵")
+        return
+
+    print(f"\n[3] 신호 산출 ({signal_date_str})...")
     # signal_date는 위 [2] 직후에 이미 확정됨 (소급 검사가 이 값을 써야 하므로)
 
     signals = select_signals(df, signal_date)
