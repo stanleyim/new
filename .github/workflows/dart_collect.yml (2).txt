@@ -1,0 +1,91 @@
+name: DART Disclosure Collect
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0,6,12,18 * * *"  # 하루 4번: 09/15/21/03시 KST 자동 실행 (체인이 끊겼을 때 대비용 안전망)
+
+permissions:
+  contents: write
+  actions: write   # 자기 자신을 재트리거하려면 필요
+
+concurrency:
+  group: dart-collect
+  cancel-in-progress: false  # 이전 실행이 돌고 있으면 겹치지 않게 대기
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch existing dart-data (if any)
+        run: |
+          git fetch origin dart-data || true
+          mkdir -p existing_dart_data
+          if git rev-parse --verify origin/dart-data > /dev/null 2>&1; then
+            git archive origin/dart-data -- dart_data | tar -x -C existing_dart_data
+            echo "기존 dart-data 브랜치 데이터 불러옴"
+          else
+            echo "dart-data 브랜치 없음 — 처음부터 시작"
+          fi
+
+      - name: Run DART collector (최대 110분, 시간예산 소진 시 자동 중단)
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TIME_BUDGET_MINUTES: "110"
+        run: python dart_collect.py
+
+      - name: Move output out of the way
+        run: mv dart_data /tmp/dart_data
+
+      - name: Commit to dart-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+
+          if git ls-remote --exit-code --heads origin dart-data > /dev/null 2>&1; then
+            git fetch origin dart-data
+            git checkout -B dart-data origin/dart-data
+          else
+            git checkout --orphan dart-data
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+
+          rm -rf dart_data
+          mkdir -p dart_data
+          cp /tmp/dart_data/*.csv dart_data/ 2>/dev/null || true
+          cp /tmp/dart_data/progress.json dart_data/ 2>/dev/null || true
+
+          git add dart_data
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음 — 커밋 생략"
+          else
+            git commit -m "DART disclosure data $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin dart-data
+          fi
+
+      - name: Trigger next run if not complete (10분 후)
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          completed=$(python3 -c "import json;print(json.load(open('/tmp/dart_data/progress.json')).get('completed', False))" 2>/dev/null || echo "False")
+          echo "completed=$completed"
+          if [ "$completed" != "True" ]; then
+            echo "10분 대기 후 다음 실행 트리거"
+            sleep 600
+            gh workflow run dart_collect.yml --ref main
+          else
+            echo "전체 수집 완료 — 추가 트리거 없음"
+          fi
