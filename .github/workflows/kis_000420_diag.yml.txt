@@ -1,0 +1,28 @@
+name: KIS 000420 Diagnostic (manual, read-only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: pip install requests
+      - name: Run 000420 diagnostic
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        run: python diag_000420.py
+      - name: Upload raw response (재검증용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: 000420-raw-response
+          path: 000420_raw_output2.json
+          retention-days: 30
