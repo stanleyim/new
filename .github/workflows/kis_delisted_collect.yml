@@ -1,0 +1,98 @@
+name: KIS Delisted/Non-Universe OHLCV Collect
+
+# dart_collect.yml과 동일 컨벤션: 이어받기 + 자기 재트리거.
+# 승인 전 상태: workflow_dispatch(수동 실행)만 열어둠. schedule은 넣지 않음
+# — 대규모 실행은 형님 승인 후 수동으로만 트리거.
+on:
+  workflow_dispatch:
+    inputs:
+      ticker_limit:
+        description: "테스트용 종목 수 제한 (비워두면 전체 2,916종목 실행)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: kis-delisted-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pandas pyarrow
+
+      - name: Fetch existing delisted-data (if any)
+        run: |
+          git fetch origin delisted-data || true
+          mkdir -p existing_delisted_data
+          if git rev-parse --verify origin/delisted-data > /dev/null 2>&1; then
+            git archive origin/delisted-data -- delisted_data | tar -x -C existing_delisted_data
+            echo "기존 delisted-data 브랜치 데이터 불러옴"
+          else
+            echo "delisted-data 브랜치 없음 — 처음부터 시작"
+          fi
+
+      - name: Run collector (최대 110분, 시간예산 소진 시 자동 중단)
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          TIME_BUDGET_MINUTES: "110"
+          TEST_TICKER_LIMIT: ${{ github.event.inputs.ticker_limit }}
+        run: python collect_delisted_full.py
+
+      - name: Move output out of the way
+        run: mv delisted_data /tmp/delisted_data
+
+      - name: Commit to delisted-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+
+          if git ls-remote --exit-code --heads origin delisted-data > /dev/null 2>&1; then
+            git fetch origin delisted-data
+            git checkout -B delisted-data origin/delisted-data
+          else
+            git checkout --orphan delisted-data
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+
+          rm -rf delisted_data
+          mkdir -p delisted_data
+          cp -r /tmp/delisted_data/* delisted_data/ 2>/dev/null || true
+
+          git add delisted_data
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음 — 커밋 생략"
+          else
+            git commit -m "Delisted/non-universe OHLCV collect $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin delisted-data
+          fi
+
+      - name: Trigger next run if not complete (10분 후)
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          completed=$(python3 -c "import json;print(json.load(open('/tmp/delisted_data/progress.json')).get('completed', False))" 2>/dev/null || echo "False")
+          echo "completed=$completed"
+          if [ "$completed" != "True" ]; then
+            echo "10분 대기 후 다음 실행 트리거"
+            sleep 600
+            gh workflow run kis_delisted_collect.yml --ref main
+          else
+            echo "전체 수집 완료 — 추가 트리거 없음"
+          fi
