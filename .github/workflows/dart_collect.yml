@@ -2,9 +2,7 @@ name: DART Disclosure Collect
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 0,6,12,18 * * *"  # 하루 4번: 09/15/21/03시 KST 자동 실행 (체인이 끊겼을 때 대비용 안전망)
-
+  
 permissions:
   contents: write
   actions: write   # 자기 자신을 재트리거하려면 필요
