@@ -177,6 +177,7 @@ class ValidationResult:
     is_valid: bool
     reasons: list = dc_field(default_factory=list)
     df: Optional[pd.DataFrame] = None
+    benign_zero_vol_dates: list = dc_field(default_factory=list)  # 감사 추적용 — 값은 그대로 저장됨
 
 
 def validate_response(raw: Optional[dict], ticker: str, start: date, end: date) -> ValidationResult:
@@ -251,12 +252,27 @@ def validate_response(raw: Optional[dict], ticker: str, start: date, end: date) 
     except Exception as e:
         return ValidationResult(is_valid=False, reasons=[f"ohlcv_parse_error:{e}"])
 
+    is_benign_zero_vol = pd.Series(False, index=df.index)
+
     if o.isna().any() or h.isna().any() or l.isna().any() or c.isna().any() or v.isna().any():
         reasons.append("ohlcv_non_numeric_values")
     else:
+        # 확정 정책 (2026-09-26, 001067/005725 실측으로 근거 확인):
+        # acml_vol==0 이면서 시가=고가=저가(직전 기준가를 그대로 유지)인 행은
+        # KIS가 무거래일을 표시하는 정상적인 방식이며 데이터 오류가 아니다.
+        # 종가만 별도 기준가 조정으로 달라져 겉보기 O/H/L vs C 논리 위반처럼
+        # 보일 뿐 — 이 패턴에 해당하는 행은 위반 판정에서만 제외한다(청크
+        # 전체를 무효화하지 않기 위함). 값 자체는 수정하지 않고 원본 그대로
+        # 저장한다 — 이 행을 forward-return 관측일로 쓰지 않는 것은
+        # 별도로 확정된 분석 단계 규칙이며, 이 함수의 책임이 아니다.
+        # 음수 값 체크는 무거래일 패턴 행에도 동일하게 적용한다(가격이
+        # 음수인 것은 어떤 경우에도 정상일 수 없음).
+        is_benign_zero_vol = (v == 0) & (o == h) & (h == l)
+        keep = ~is_benign_zero_vol
+
         violations = int(
-            (h < l).sum() + (h < o).sum() + (h < c).sum()
-            + (l > o).sum() + (l > c).sum()
+            (h[keep] < l[keep]).sum() + (h[keep] < o[keep]).sum() + (h[keep] < c[keep]).sum()
+            + (l[keep] > o[keep]).sum() + (l[keep] > c[keep]).sum()
             + (o < 0).sum() + (h < 0).sum() + (l < 0).sum() + (c < 0).sum()
             + (v < 0).sum()
         )
@@ -266,10 +282,11 @@ def validate_response(raw: Optional[dict], ticker: str, start: date, end: date) 
     if reasons:
         return ValidationResult(is_valid=False, reasons=reasons)
 
+    benign_dates = dates[is_benign_zero_vol].dt.strftime("%Y-%m-%d").tolist()
     out_df = pd.DataFrame({
         "date": dates.dt.strftime("%Y-%m-%d"), "open": o, "high": h, "low": l, "close": c, "volume": v,
     }).sort_values("date").reset_index(drop=True)
-    return ValidationResult(is_valid=True, reasons=[], df=out_df)
+    return ValidationResult(is_valid=True, reasons=[], df=out_df, benign_zero_vol_dates=benign_dates)
 
 
 # ----------------------------------------------------------------------
@@ -312,6 +329,12 @@ def collect_one_chunk(client: "KisClient", ticker: str, start: date, end: date) 
 
     if result.is_valid:
         _append_to_parquet(ticker, result.df)
+        if result.benign_zero_vol_dates:
+            log_anomaly_event({
+                "ticker": ticker, "start": start.isoformat(), "end": end.isoformat(),
+                "outcome": "benign_zero_volume_rows_kept",
+                "dates": result.benign_zero_vol_dates,
+            })
         return "saved_empty" if result.df.empty else "saved"
 
     raw_path_1 = save_raw_anomaly(raw, ticker, start, end, attempt=1)
@@ -331,6 +354,12 @@ def collect_one_chunk(client: "KisClient", ticker: str, start: date, end: date) 
             "ticker": ticker, "start": start.isoformat(), "end": end.isoformat(),
             "attempt": 2, "outcome": "resolved_on_retry",
         })
+        if result_retry.benign_zero_vol_dates:
+            log_anomaly_event({
+                "ticker": ticker, "start": start.isoformat(), "end": end.isoformat(),
+                "outcome": "benign_zero_volume_rows_kept",
+                "dates": result_retry.benign_zero_vol_dates,
+            })
         return "saved_empty" if result_retry.df.empty else "saved"
 
     raw_path_2 = save_raw_anomaly(raw_retry, ticker, start, end, attempt=2)
