@@ -4,3 +4,4 @@
 {"ticker": "005725", "start": "2026-08-06", "end": "2026-09-26", "attempt": 2, "reasons": ["ohlc_logic_violations:1건"], "raw_saved_to": "delisted_data/_raw_anomalies/005725_20260806_20260926_attempt2_20260926_035654.json", "outcome": "flagged"}
 {"ticker": "006140", "start": "2016-06-19", "end": "2016-09-26", "attempt": 1, "reasons": ["rt_cd=9 msg=SESSION FULL"], "raw_saved_to": "delisted_data/_raw_anomalies/006140_20160619_20160926_attempt1_20260926_040004.json"}
 {"ticker": "006140", "start": "2016-06-19", "end": "2016-09-26", "attempt": 2, "reasons": ["rt_cd=9 msg=SESSION FULL"], "raw_saved_to": "delisted_data/_raw_anomalies/006140_20160619_20160926_attempt2_20260926_040005.json", "outcome": "flagged"}
+{"ticker": "006140", "start": "2016-06-19", "end": "2016-09-26", "attempt": "manual_retry", "outcome": "resolved_on_manual_retry", "rows_saved": 67}
