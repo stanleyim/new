@@ -83,6 +83,12 @@ def main() -> None:
             "attempt": "manual_retry", "outcome": "resolved_on_manual_retry",
             "rows_saved": int(len(result.df)),
         })
+        if result.benign_zero_vol_dates:
+            log_anomaly_event({
+                "ticker": ticker, "start": start.isoformat(), "end": end.isoformat(),
+                "outcome": "benign_zero_volume_rows_kept",
+                "dates": result.benign_zero_vol_dates,
+            })
         _remove_from_flagged(ticker, start, end)
         print(f"[RESOLVED] {ticker} {start}~{end} — {len(result.df)}건 저장, flagged.json에서 제거 완료")
     else:
