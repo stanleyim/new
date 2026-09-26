@@ -1,0 +1,2 @@
+{"ticker": "001067", "start": "2026-08-06", "end": "2026-09-26", "attempt": 1, "reasons": ["ohlc_logic_violations:1건"], "raw_saved_to": "delisted_data/_raw_anomalies/001067_20260806_20260926_attempt1_20260926_030959.json"}
+{"ticker": "001067", "start": "2026-08-06", "end": "2026-09-26", "attempt": 2, "reasons": ["ohlc_logic_violations:1건"], "raw_saved_to": "delisted_data/_raw_anomalies/001067_20260806_20260926_attempt2_20260926_030959.json", "outcome": "flagged"}

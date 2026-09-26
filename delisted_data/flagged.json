@@ -1,0 +1,14 @@
+[
+  {
+    "ticker": "001067",
+    "start": "2026-08-06",
+    "end": "2026-09-26",
+    "reasons_first_attempt": [
+      "ohlc_logic_violations:1건"
+    ],
+    "reasons_retry_attempt": [
+      "ohlc_logic_violations:1건"
+    ],
+    "flagged_at": "2026-09-26T03:09:59.687892"
+  }
+]
