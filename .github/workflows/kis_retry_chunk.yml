@@ -1,0 +1,76 @@
+name: KIS Retry Single Ticker/Chunk
+
+# flagged.json에 남은 개별 종목+기간 하나를 단발 재수집.
+# kis_delisted_collect.yml과 동일 컨벤션(체크아웃 -> delisted-data 브랜치 fetch
+# -> 실행 -> commit)만 따라감. 전체 재실행이 필요할 때는 kis_delisted_collect.yml을
+# 대신 사용할 것.
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "재수집할 종목 코드 (예: 006140)"
+        required: true
+      start_date:
+        description: "시작일 YYYY-MM-DD (예: 2016-06-19)"
+        required: true
+      end_date:
+        description: "종료일 YYYY-MM-DD (예: 2016-09-26)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kis-delisted-collect
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests pandas pyarrow
+
+      - name: Fetch delisted-data branch's delisted_data/ directly
+        run: |
+          git fetch origin delisted-data
+          rm -rf delisted_data
+          git archive origin/delisted-data -- delisted_data | tar -x
+
+      - name: Run retry script
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          RETRY_TICKER: ${{ github.event.inputs.ticker }}
+          RETRY_START: ${{ github.event.inputs.start_date }}
+          RETRY_END: ${{ github.event.inputs.end_date }}
+        run: python retry_ticker_chunk.py
+
+      - name: Commit result to delisted-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+
+          mv delisted_data /tmp/delisted_data_retry
+          git fetch origin delisted-data
+          git checkout -B delisted-data origin/delisted-data
+
+          rm -rf delisted_data
+          mv /tmp/delisted_data_retry delisted_data
+
+          git add delisted_data
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음 — 커밋 생략 (여전히 flagged일 가능성)"
+          else
+            git commit -m "Retry ${{ github.event.inputs.ticker }} ${{ github.event.inputs.start_date }}~${{ github.event.inputs.end_date }} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin delisted-data
+          fi
