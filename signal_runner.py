@@ -21,6 +21,7 @@ SIG_DIR = OUT / "signals"
 ALL_SIGNALS_LOG_DIR = OUT / "all_signals_log"
 HOLDINGS_PATH = OUT / "holdings.json"
 RESULTS_PATH = OUT / "results.json"
+LAST_NOTIFIED_PATH = OUT / "last_notified_date.json"
 
 UNIVERSE_PATH = DATA / "universe.parquet"
 OHLCV_PATH = DATA / "ohlcv_full.parquet"
@@ -476,6 +477,33 @@ def weekday_kr(date_str):
     wd = ["월","화","수","목","금","토","일"]
     return f"({wd[pd.Timestamp(date_str).weekday()]})"
 
+def next_business_day(d: pd.Timestamp) -> pd.Timestamp:
+    """d 다음날부터 시작해서 토/일을 건너뛴 첫 평일을 반환 (공휴일 여부는 호출 측에서 별도 판정)."""
+    nxt = d + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return nxt
+
+def load_last_notified_date(fallback_str: str) -> pd.Timestamp:
+    """가장 최근에 실제로 알림(정상 신호든 휴장/주말 스킵이든)을 보낸 날짜를 읽어온다.
+    파일이 없으면(최초 실행) fallback으로 signal_date_str을 사용 — 그 날짜의 신호는
+    이미 과거에 실제로 발송된 것으로 간주하고 그 다음 날부터 카운팅을 시작한다."""
+    if LAST_NOTIFIED_PATH.exists():
+        try:
+            saved = json.loads(LAST_NOTIFIED_PATH.read_text(encoding="utf-8")).get("date")
+            if saved:
+                return pd.to_datetime(saved)
+        except Exception:
+            pass
+    return pd.to_datetime(fallback_str)
+
+def save_last_notified_date(d) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    LAST_NOTIFIED_PATH.write_text(
+        json.dumps({"date": pd.Timestamp(d).strftime("%Y-%m-%d")}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
 def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid):
     lines = [f"📊 {REPO_LABEL}", f"{target_date} {weekday_kr(target_date)} (20:00 산출)", ""]
 
@@ -536,8 +564,6 @@ def main():
     #    "이미 처리됐는지"를 확인한 뒤에야 최종적으로 휴장/스킵 여부를 판단한다.
     import holidays
     kr_holidays = holidays.SouthKorea()
-    is_weekend = target_date.weekday() >= 5
-    is_holiday = target_date.date() in kr_holidays
 
     print("\n[1] KIS 데이터 fetch...")
     ohlcv, flow, short, universe = fetch_and_append()
@@ -560,6 +586,20 @@ def main():
         signal_date = target_date
 
     signal_date_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
+
+    # 2026-09-26 수정: 휴장/주말 스킵 메시지의 날짜 라벨을 target_date_str(실행
+    # 시각의 wall-clock)이 아니라, "마지막으로 알림을 보낸 날짜 + 1영업일(주말
+    # 자동 건너뜀)"로 계산한 report_date로 고정한다. cron이 자정을 넘겨 지연
+    # 실행되면 target_date_str이 실제보다 하루(때로 주말까지) 앞서 버려서,
+    # 추석 연휴 같은 연속 휴장일에 라벨이 밀리거나 존재하지도 않는 "주말
+    # 스킵"이 찍히는 사고가 있었다. report_date는 실행이 아무리 늦어도 직전
+    # 알림 이후 정확히 하루(평일 기준)씩만 전진하므로 이 문제가 생기지 않는다.
+    # 단, 실행이 오래 중단됐다가 재개되는 등 wall-clock보다 앞서갈 이유는
+    # 없으므로 target_date를 넘지 않도록 상한을 둔다.
+    report_date = min(next_business_day(load_last_notified_date(signal_date_str)), target_date)
+    report_date_str = report_date.strftime("%Y-%m-%d")
+    report_is_weekend = report_date.weekday() >= 5
+    report_is_holiday = report_date.date() in kr_holidays
 
     # ===== D: 최근 3영업일 소급 신호 산출 =====
     print("\n[2-1] 소급 신호 검사 (최근 3영업일)...")
@@ -663,11 +703,12 @@ def main():
     already_done = signal_all_log_path.exists()
 
     if already_done:
-        if is_weekend or is_holiday:
-            reason = "주말" if is_weekend else f"공휴일 ({kr_holidays.get(target_date.date())})"
-            msg = f"📊 {REPO_LABEL}\n{target_date_str} {weekday_kr(target_date_str)}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
+        if report_is_weekend or report_is_holiday:
+            reason = "주말" if report_is_weekend else f"공휴일 ({kr_holidays.get(report_date.date())})"
+            msg = f"📊 {REPO_LABEL}\n{report_date_str} {weekday_kr(report_date_str)}\n\n한국 시장 휴장 — {reason}입니다.\n실행 스킵."
             print(msg)
             send_telegram(msg)
+            save_last_notified_date(report_date)
         else:
             print(f"{signal_date_str} 이미 처리됨 — 중복 실행 스킵")
         return
@@ -839,6 +880,7 @@ def main():
     print("\n[5] Telegram...")
     msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid)
     send_telegram(msg)
+    save_last_notified_date(signal_date)
     print(msg)
     print("\n=== 완료 ===")
 
