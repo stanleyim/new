@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, timedelta
@@ -393,6 +394,32 @@ def load_tickers(csv_path: str) -> list:
         return [row["ticker"] for row in reader]
 
 
+def seed_existing_output() -> None:
+    """이전 실행에서 delisted-data 브랜치에 커밋된 기존 산출물(OUT_DIR과 동일 구조로
+    workflow가 EXISTING_DIR에 미리 복사해둔 것)을 OUT_DIR로 이관한다.
+
+    수정 전 버그: OUT_DIR은 매 실행마다 빈 디렉토리로 시작하는데(fresh checkout),
+    이 이관 과정이 없어 새로 처리된 종목의 파일만 OUT_DIR에 쌓였다. workflow의
+    커밋 스텝은 OUT_DIR 전체로 delisted_data를 덮어쓰므로(rm -rf 후 복사),
+    이번 실행에서 다시 건드리지 않은 이전 종목들의 parquet가 커밋 시 통째로
+    유실될 위험이 있었다. 또한 OUT_DIR이 이 시점에 무조건 생성되므로,
+    아래 completed 스킵 경로를 포함한 모든 경로에서 workflow의
+    `mv delisted_data /tmp/delisted_data` 스텝이 항상 성공한다.
+    """
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not os.path.isdir(EXISTING_DIR):
+        return
+    for name in os.listdir(EXISTING_DIR):
+        src = os.path.join(EXISTING_DIR, name)
+        dst = OUT_DIR / name
+        if os.path.isdir(src):
+            if not dst.exists():
+                shutil.copytree(src, dst)
+        else:
+            if not dst.exists():
+                shutil.copy2(src, dst)
+
+
 # ----------------------------------------------------------------------
 # 메인
 # ----------------------------------------------------------------------
@@ -404,11 +431,33 @@ def main() -> None:
         tickers = tickers[:n]
         print(f"[TEST MODE] TEST_TICKER_LIMIT={n} — 앞 {n}종목만 처리: {tickers}")
     plan = build_plan(tickers)
+
+    seed_existing_output()
+
     progress = load_progress()
-    done_index = progress["done_index"]
+    done_index = progress.get("done_index", -1)
+
+    # 버그 수정: 이전 실행(예: ticker_limit로 축소된 테스트런)의 completed=True가
+    # plan 크기가 다른 이번 실행에 그대로 오적용되는 것을 방지. plan_size를
+    # progress.json에 함께 저장해두고, 이번 plan과 정확히 일치할 때만 completed를
+    # 신뢰한다. plan_size 키가 아예 없는 구버전 progress.json(현재 실제 브랜치
+    # 상태가 이 경우)도 "불일치"로 취급 — None != len(plan)이라 자동으로 안전 쪽으로
+    # 처리된다.
+    # (실제 사고: 5종목 테스트런의 completed:true(plan=235, plan_size 키 없음)를
+    #  전체 2,916종목 실행이 그대로 읽어 즉시 종료 — OUT_DIR도 생성되지 않아
+    #  mv 스텝이 실패했음)
+    prev_plan_size = progress.get("plan_size")
+    if progress.get("completed") and prev_plan_size != len(plan):
+        print(
+            f"[WARN] plan 크기 불일치 감지 (이전 plan_size={prev_plan_size!r}, "
+            f"현재={len(plan)}) — completed 플래그 무시, done_index만 이어받음"
+        )
+        progress["completed"] = False
 
     if progress.get("completed"):
         print("이미 전체 완료 — 스킵")
+        progress["plan_size"] = len(plan)
+        PROGRESS_PATH.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
         return
 
     print(f"전체 작업 {len(plan)}건 (종목 {len(tickers)} x 청크), 이어받기 시작 지점: {done_index + 1}")
@@ -436,9 +485,11 @@ def main() -> None:
 
         if idx % 50 == 0:
             OUT_DIR.mkdir(parents=True, exist_ok=True)
+            progress["plan_size"] = len(plan)
             PROGRESS_PATH.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
 
     progress["completed"] = idx >= len(plan)
+    progress["plan_size"] = len(plan)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     PROGRESS_PATH.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
     print(f"이번 실행 종료: saved={n_saved} flagged={n_flagged} done_index={progress['done_index']} completed={progress['completed']}")
