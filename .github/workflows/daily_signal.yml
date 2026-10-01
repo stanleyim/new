@@ -2,7 +2,7 @@ name: Daily Signal Run
 
 on:
   schedule:
-    - cron: '0 11 * * 1-5'
+    - cron: '17 11 * * 1-5'  # 11:17 UTC (20:17 KST)
   workflow_dispatch:
 
 jobs:
