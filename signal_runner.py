@@ -34,6 +34,8 @@ K_MAX = 5
 MAX_WEIGHT = 0.25
 N_PICK_MIN = 3
 HOLD_DAYS = 20
+DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 시가) 대비 -5% 이하이면 처분 준비 알림
+DROP_ALERT_PATH = OUT / "drop_alerts_sent.json"  # 이미 보낸 알림 (종목당 1회)
 
 REPO_LABEL = "stanleyim/new"
 
@@ -547,6 +549,90 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
 
     return "\n".join(lines)
 
+def _send_telegram_checked(text):
+    """send_telegram과 동일한 호출이되 성공 여부를 반환 (실패 시 알림 상태를 저장하지 않기 위함)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        print("[WARN] Telegram 환경변수 없음, 처분 준비 알림 스킵")
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    r = requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=30)
+    if r.status_code != 200:
+        print(f"[WARN] Telegram 실패: {r.status_code} {r.text}")
+        return False
+    return True
+
+def compute_drop_alerts(df, today, log_dir, sent):
+    """all_signals_log의 미청산 종목 중, today 종가가 virtual_entry_price 대비 DROP_ALERT_TH 이하인 종목.
+    sent(이미 보낸 키 dict)에 있는 (signal_date|ticker)는 제외. 파일/상태를 쓰지 않는 순수 함수."""
+    today = pd.Timestamp(today)
+    day = df[df["date"] == today].drop_duplicates("ticker")
+    px = dict(zip(day["ticker"].astype(str), day["종가"]))
+    out = []
+    for lf in sorted(Path(log_dir).glob("*.json")):
+        try:
+            data = json.loads(lf.read_text())
+        except Exception:
+            continue
+        for rec in data.get("records", []):
+            if rec.get("status") == "closed":
+                continue
+            tkr = str(rec.get("ticker"))
+            ep = rec.get("virtual_entry_price")
+            ed = rec.get("virtual_entry_date")
+            if not ep or ep <= 0 or not ed:
+                continue
+            if pd.Timestamp(ed) > today:
+                continue
+            xd = rec.get("virtual_exit_date_planned")
+            if xd and pd.Timestamp(xd) < today:
+                continue  # 청산 예정일이 지난 미정리 기록은 제외
+            key = f"{rec.get('signal_date')}|{tkr}"
+            if key in sent:
+                continue
+            cp = px.get(tkr)
+            if cp is None:
+                continue
+            cp = float(cp)
+            if not cp > 0:  # NaN/0 제외
+                continue
+            ret = cp / float(ep) - 1.0
+            if ret <= DROP_ALERT_TH:
+                out.append({
+                    "key": key, "ticker": tkr, "name": rec.get("name") or "?",
+                    "entry_date": ed, "entry_price": float(ep), "close": cp,
+                    "ret": ret, "exit_planned": xd,
+                })
+    return out
+
+def run_drop_alerts(df, signal_date):
+    """미청산 종목이 진입가 대비 -5% 이하이면 텔레그램 '처분 준비' 알림 (종목당 1회). 상태는 output/drop_alerts_sent.json."""
+    sig_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
+    sent = {}
+    if DROP_ALERT_PATH.exists():
+        try:
+            sent = json.loads(DROP_ALERT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            sent = {}
+    alerts = compute_drop_alerts(df, signal_date, ALL_SIGNALS_LOG_DIR, sent)
+    if not alerts:
+        print("처분 준비 알림: 해당 없음")
+        return
+    lines = [f"🔻 {REPO_LABEL} 처분 준비", f"{sig_str} {weekday_kr(sig_str)} 종가 기준, 진입가 대비 -5% 이하", ""]
+    for a in alerts:
+        lines.append(f"- [{a['ticker']}] {a['name']}")
+        lines.append(f"  진입 {a['entry_date']} 시가 {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
+        if a["exit_planned"]:
+            lines.append(f"  청산예정(T+20) {a['exit_planned']}")
+    msg = "\n".join(lines)
+    print(msg)
+    if _send_telegram_checked(msg):
+        for a in alerts:
+            sent[a["key"]] = {"alert_date": sig_str, "close": a["close"], "ret": round(a["ret"], 6)}
+        OUT.mkdir(parents=True, exist_ok=True)
+        DROP_ALERT_PATH.write_text(json.dumps(sent, indent=2, ensure_ascii=False), encoding="utf-8")
+
 def main():
     SIG_DIR.mkdir(parents=True, exist_ok=True)
     ALL_SIGNALS_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -882,6 +968,10 @@ def main():
     send_telegram(msg)
     save_last_notified_date(signal_date)
     print(msg)
+    try:
+        run_drop_alerts(df, signal_date)
+    except Exception as e:
+        print(f"[WARN] 처분 준비 알림 실패 (신호 처리는 정상 완료): {e}")
     print("\n=== 완료 ===")
 
 if __name__ == "__main__":
