@@ -34,6 +34,7 @@ K_MAX = 5
 MAX_WEIGHT = 0.25
 N_PICK_MIN = 1  # 2026-10-13: 종목 단위 검증 기준(같은 날 1종목도 진입)
 HOLD_DAYS = 10  # 2026-10-13: T+1 시가 매수 -> T+10 종가 청산 (설계구간 h10 검증)
+DATA_READY_HOUR_KST = 18  # 2026-10-13: 장마감(15:30) 후 확정 자료만 사용. 이 시각(KST) 전에는 '전 거래일'까지만 사용 (정규 cron 20:00)
 DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 시가) 대비 -5% 이하이면 처분 준비 알림
 DROP_ALERT_PATH = OUT / "drop_alerts_sent.json"  # 이미 보낸 알림 (종목당 1회)
 
@@ -253,19 +254,33 @@ class KisClient:
         return rows
 
 # ===== 데이터 fetch + append =====
+def data_cutoff_date():
+    """사용 가능한 마지막 날짜(KST). DATA_READY_HOUR_KST 전이면 전날, 이후면 당일."""
+    now = pd.Timestamp.now(tz="Asia/Seoul")
+    d = now.normalize().tz_localize(None)
+    return d if now.hour >= DATA_READY_HOUR_KST else d - pd.Timedelta(days=1)
+
 def fetch_and_append():
     universe = pd.read_parquet(UNIVERSE_PATH)
     ohlcv_old = pd.read_parquet(OHLCV_PATH)
     flow_old  = pd.read_parquet(FLOW_PATH)
     short_old = pd.read_parquet(SHORT_PATH)
 
+    cutoff = data_cutoff_date()
+    # 장중 수집된 당일 부분 행이 저장돼 있어도 cutoff 이후 날짜는 사용하지 않음 (마감 후 다시 수집)
+    for _d in (ohlcv_old, flow_old, short_old):
+        _d["date"] = pd.to_datetime(_d["date"])
+    ohlcv_old = ohlcv_old[ohlcv_old["date"] <= cutoff].copy()
+    flow_old = flow_old[flow_old["date"] <= cutoff].copy()
+    short_old = short_old[short_old["date"] <= cutoff].copy()
+
     last_ohlcv = pd.to_datetime(ohlcv_old["date"]).max()
     last_flow  = pd.to_datetime(flow_old["date"]).max()
     last_short = pd.to_datetime(short_old["date"]).max()
     last_date = min(last_ohlcv, last_flow, last_short)
-    today = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
+    today = cutoff
     print(f"last_ohlcv={last_ohlcv.date()}, last_flow={last_flow.date()}, last_short={last_short.date()}")
-    print(f"target today={today.date()}")
+    print(f"데이터 기준일(cutoff)={today.date()} (KST {DATA_READY_HOUR_KST}시 전이면 전날)")
 
     if last_date >= today:
         print("이미 최신, fetch 스킵")
