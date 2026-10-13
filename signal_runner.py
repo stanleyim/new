@@ -424,11 +424,8 @@ def add_cap_class(df, universe):
 
 def select_signals(df, target_date):
     today_df = df[df["date"] == pd.to_datetime(target_date)]
-    # U 규칙(2026-10-13, 설계구간 h10 검증 합격): N3 ∪ (FZ+VR) ∪ (VS+FZ)
-    u_mask = ((today_df["n_signals"] >= 3)
-              | ((today_df["frgn_z"] > 2.0) & (today_df["vol_ratio"] > 1.5))
-              | ((today_df["vol_surge"] > 2.0) & (today_df["frgn_z"] > 2.0)))
-    today_df = today_df[u_mask]
+    # 2026-10-13: U 규칙은 근접구간(2023~24) 점검에서 탈락(N3 대비 -0.75%p, p=0.038) -> 기존 n>=3 복귀
+    today_df = today_df[today_df["n_signals"] >= 3]
     today_df = today_df.dropna(subset=["거래대금_20ma"])
     today_df = today_df[today_df["거래대금_20ma"] >= LIQ_TH]
     if len(today_df) == 0:
