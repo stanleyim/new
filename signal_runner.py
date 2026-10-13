@@ -260,6 +260,31 @@ def data_cutoff_date():
     d = now.normalize().tz_localize(None)
     return d if now.hour >= DATA_READY_HOUR_KST else d - pd.Timedelta(days=1)
 
+STALE_DATE = pd.Timestamp("2026-10-13")
+STALE_MARKER = OUT / ".cleanup_20261013_done"
+
+def one_time_cleanup_20261013():
+    """1회성: 2026-10-13 11:16 장중 수동 실행이 남긴 부분 데이터·기록 제거.
+    마감 후(18시 이후) 같은 날 실행에서만 동작 -> 아래 [1] fetch가 마감 자료로 10-13을 새로 수집·계산한다."""
+    if STALE_MARKER.exists():
+        return
+    if data_cutoff_date() != STALE_DATE:
+        return
+    for p in (OHLCV_PATH, FLOW_PATH, SHORT_PATH):
+        d = pd.read_parquet(p)
+        d["date"] = pd.to_datetime(d["date"])
+        n = int((d["date"] >= STALE_DATE).sum())
+        if n:
+            d[d["date"] < STALE_DATE].to_parquet(p, index=False)
+        print(f"[정리] {p.name}: {STALE_DATE.date()} 이후 {n}행 제거")
+    for p in (SIG_DIR / f"{STALE_DATE.date()}.json", ALL_SIGNALS_LOG_DIR / f"{STALE_DATE.date()}.json"):
+        if p.exists():
+            p.unlink()
+            print(f"[정리] 삭제: {p.name}")
+    save_last_notified_date(STALE_DATE - pd.Timedelta(days=1))
+    OUT.mkdir(parents=True, exist_ok=True)
+    STALE_MARKER.write_text("done", encoding="utf-8")
+
 def fetch_and_append():
     universe = pd.read_parquet(UNIVERSE_PATH)
     ohlcv_old = pd.read_parquet(OHLCV_PATH)
@@ -669,6 +694,8 @@ def main():
     #    "이미 처리됐는지"를 확인한 뒤에야 최종적으로 휴장/스킵 여부를 판단한다.
     import holidays
     kr_holidays = holidays.SouthKorea()
+
+    one_time_cleanup_20261013()
 
     print("\n[1] KIS 데이터 fetch...")
     ohlcv, flow, short, universe = fetch_and_append()
