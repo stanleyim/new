@@ -32,8 +32,8 @@ TOTAL_COST = 0.00206
 LIQ_TH = 30e8
 K_MAX = 5
 MAX_WEIGHT = 0.25
-N_PICK_MIN = 3
-HOLD_DAYS = 20
+N_PICK_MIN = 1  # 2026-10-13: 종목 단위 검증 기준(같은 날 1종목도 진입)
+HOLD_DAYS = 10  # 2026-10-13: T+1 시가 매수 -> T+10 종가 청산 (설계구간 h10 검증)
 DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 시가) 대비 -5% 이하이면 처분 준비 알림
 DROP_ALERT_PATH = OUT / "drop_alerts_sent.json"  # 이미 보낸 알림 (종목당 1회)
 
@@ -384,7 +384,11 @@ def add_cap_class(df, universe):
 
 def select_signals(df, target_date):
     today_df = df[df["date"] == pd.to_datetime(target_date)]
-    today_df = today_df[today_df["n_signals"] >= 3]
+    # U 규칙(2026-10-13, 설계구간 h10 검증 합격): N3 ∪ (FZ+VR) ∪ (VS+FZ)
+    u_mask = ((today_df["n_signals"] >= 3)
+              | ((today_df["frgn_z"] > 2.0) & (today_df["vol_ratio"] > 1.5))
+              | ((today_df["vol_surge"] > 2.0) & (today_df["frgn_z"] > 2.0)))
+    today_df = today_df[u_mask]
     today_df = today_df.dropna(subset=["거래대금_20ma"])
     today_df = today_df[today_df["거래대금_20ma"] >= LIQ_TH]
     if len(today_df) == 0:
@@ -417,8 +421,8 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
     
     for h in holdings:
         entry_date = pd.to_datetime(h["entry_date"])
-        # T+1 = entry_date 다음 거래일에 매수 → +20영업일 후 종가 매도
-        # 즉, entry_date 거래일 인덱스 + 21 = 종결일 (T+1 매수 + 20일 보유)
+        # T+1 = entry_date 다음 거래일 시가 매수 → T+HOLD_DAYS 종가 매도
+        # days_held == HOLD_DAYS 인 날 종가로 current_ret 갱신, HOLD_DAYS+1 에 종결 처리
         if entry_date in date_idx and target_d in date_idx:
             entry_i = date_idx[entry_date]
             target_i = date_idx[target_d]
@@ -426,7 +430,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
         else:
             days_held = (target_d - entry_date).days  # fallback
         
-        if days_held >= 21:  # T+1 매수 후 T+20 종가 도달 = entry_date에서 21영업일
+        if days_held >= HOLD_DAYS + 1:  # T+HOLD_DAYS 종가까지 반영 후 종결
             closed.append(h)
         else:
             # entry_price 자동 채움: T+1 시가 = entry_date 다음 영업일 시가
@@ -447,7 +451,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
                 h["current_price"] = cur_price
                 h["current_ret"] = cur_price / h["entry_price"] - 1 if h.get("entry_price") else None
                 h["days_held"] = days_held
-                h["bdays_remaining"] = max(0, 21 - days_held)
+                h["bdays_remaining"] = max(0, HOLD_DAYS - days_held)
             open_h.append(h)
 
     n_open = len(open_h)
@@ -465,7 +469,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
                 "signal_score": float(s["signal_score"]),
                 "n_signals": int(s["n_signals"]),
                 "entry_price": None,  # T+1 시가에 결정됨
-                "exit_date_planned": str(trade_dates[min(date_idx[target_d] + 21, len(trade_dates)-1)].date()) if target_d in date_idx else str((target_d + pd.Timedelta(days=28)).date()),
+                "exit_date_planned": str(trade_dates[min(date_idx[target_d] + HOLD_DAYS, len(trade_dates)-1)].date()) if target_d in date_idx else str((target_d + pd.Timedelta(days=14)).date()),
                 "weight": MAX_WEIGHT,
                 "current_price": None,
                 "current_ret": None,
@@ -624,7 +628,7 @@ def run_drop_alerts(df, signal_date):
         lines.append(f"- [{a['ticker']}] {a['name']}")
         lines.append(f"  진입 {a['entry_date']} 시가 {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
         if a["exit_planned"]:
-            lines.append(f"  청산예정(T+20) {a['exit_planned']}")
+            lines.append(f"  청산예정(T+{HOLD_DAYS}) {a['exit_planned']}")
     msg = "\n".join(lines)
     print(msg)
     if _send_telegram_checked(msg):
@@ -731,7 +735,7 @@ def main():
         virtual_records = []
         for s in past_signals:
             entry_idx = past_sig_idx + 1 if past_sig_idx is not None else None
-            exit_idx = past_sig_idx + 21 if past_sig_idx is not None else None
+            exit_idx = past_sig_idx + HOLD_DAYS if past_sig_idx is not None else None
             virtual_entry_date = str(trade_dates_all_early[entry_idx].date()) if entry_idx is not None and entry_idx < len(trade_dates_all_early) else None
             virtual_exit_date_planned = str(trade_dates_all_early[exit_idx].date()) if exit_idx is not None and exit_idx < len(trade_dates_all_early) else None
             rec = {
@@ -852,18 +856,18 @@ def main():
     }, indent=2, ensure_ascii=False, default=str))
     print(f"저장: {sig_path}")
 
-    # all_signals_log: 매매 여부 무관, 모든 신호 종목의 T+20 가상 결과 추적용
+    # all_signals_log: 매매 여부 무관, 모든 신호 종목의 T+HOLD_DAYS 가상 결과 추적용
     trade_dates_all = sorted(df["date"].unique())
     date_to_idx = {d: i for i, d in enumerate(trade_dates_all)}
     sig_d_idx = date_to_idx.get(pd.Timestamp(signal_date))
 
     all_log_path = ALL_SIGNALS_LOG_DIR / f"{signal_date_str}.json"
     if not all_log_path.exists():
-        # 최초 저장: 신호 목록 + T+1, T+20 계획 날짜
+        # 최초 저장: 신호 목록 + T+1, T+HOLD_DAYS 계획 날짜
         virtual_records = []
         for s in signals:
             entry_idx = sig_d_idx + 1 if sig_d_idx is not None else None
-            exit_idx = sig_d_idx + 21 if sig_d_idx is not None else None
+            exit_idx = sig_d_idx + HOLD_DAYS if sig_d_idx is not None else None
             virtual_entry_date = str(trade_dates_all[entry_idx].date()) if entry_idx is not None and entry_idx < len(trade_dates_all) else None
             virtual_exit_date_planned = str(trade_dates_all[exit_idx].date()) if exit_idx is not None and exit_idx < len(trade_dates_all) else None
             rec = {
@@ -907,7 +911,7 @@ def main():
             continue
         records = data.get("records", [])
         modified = False
-        # 파일의 signal_date로부터 T+1, T+21 재계산 준비
+        # 파일의 signal_date로부터 T+1, T+HOLD_DAYS 재계산 준비
         file_sig_date_str = data.get("signal_date")
         file_sig_d = pd.to_datetime(file_sig_date_str) if file_sig_date_str else None
         file_sig_idx = date_to_idx.get(file_sig_d) if file_sig_d is not None else None
@@ -924,7 +928,7 @@ def main():
                     rec["virtual_entry_date"] = str(trade_dates_all[e_idx].date())
                     modified = True
             if rec.get("virtual_exit_date_planned") is None and file_sig_idx is not None:
-                x_idx = file_sig_idx + 21
+                x_idx = file_sig_idx + HOLD_DAYS
                 if x_idx < len(trade_dates_all):
                     rec["virtual_exit_date_planned"] = str(trade_dates_all[x_idx].date())
                     modified = True
@@ -942,7 +946,7 @@ def main():
                         rec["virtual_entry_price"] = op
                         modified = True
 
-            # T+20 exit_price 채움 (종가) + 수익 계산
+            # T+HOLD_DAYS exit_price 채움 (종가) + 수익 계산
             if rec.get("virtual_exit_price") is None and vx_date is not None:
                 vx_d = pd.to_datetime(vx_date)
                 row = df[(df["ticker"] == tkr) & (df["date"] == vx_d)]
