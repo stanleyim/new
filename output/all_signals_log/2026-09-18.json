@@ -19,11 +19,11 @@
       "signal_close": 11630.0,
       "virtual_entry_date": "2026-09-21",
       "virtual_entry_price": 11750.0,
-      "virtual_exit_date_planned": null,
-      "virtual_exit_price": null,
-      "gross_ret": null,
-      "net_ret": null,
-      "status": "pending"
+      "virtual_exit_date_planned": "2026-10-07",
+      "virtual_exit_price": 10830.0,
+      "gross_ret": -0.07829787234042551,
+      "net_ret": -0.08035787234042552,
+      "status": "closed"
     },
     {
       "signal_date": "2026-09-18",
@@ -42,11 +42,11 @@
       "signal_close": 22350.0,
       "virtual_entry_date": "2026-09-21",
       "virtual_entry_price": 22700.0,
-      "virtual_exit_date_planned": null,
-      "virtual_exit_price": null,
-      "gross_ret": null,
-      "net_ret": null,
-      "status": "pending"
+      "virtual_exit_date_planned": "2026-10-07",
+      "virtual_exit_price": 24850.0,
+      "gross_ret": 0.09471365638766516,
+      "net_ret": 0.09265365638766515,
+      "status": "closed"
     }
   ]
 }
