@@ -3,6 +3,7 @@ v7 final forward test runner — KIS API 버전
 매일 KST 20:00 GitHub Actions cron 실행.
 """
 import os
+import copy
 import json
 import sys
 import time
@@ -39,6 +40,9 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
+OPS_VERSION = "v8.2"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+# 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
+IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
 #   T+1 종가 진입(T+1 종가가 신호일 종가 대비 +29% 이상이면 미체결, 슬롯은 점유) · 신호일 등락률 <= 10% · KOSDAQ 60일선 +4.5% 초과일 신호 무시
 GAP_CAP = 10.0          # 신호일 등락률(%) 상한
@@ -736,6 +740,66 @@ def run_drop_alerts(df, signal_date):
         OUT.mkdir(parents=True, exist_ok=True)
         DROP_ALERT_PATH.write_text(json.dumps(sent, indent=2, ensure_ascii=False), encoding="utf-8")
 
+def run_manual_check(df, signal_date):
+    """2026-10-15 (ops v8.2) 수동 점검 모드.
+    수동 실행인데 신호일이 이미 처리된 경우: 현재 코드로 처음부터 다시 계산해 텔레그램으로 보낸다.
+    파일은 하나도 쓰지 않는다 (holdings·signals·all_signals_log·알림 발송 이력·last_notified 모두 그대로)."""
+    sig_str = pd.Timestamp(signal_date).strftime("%Y-%m-%d")
+    signals = select_signals(df, signal_date)
+    if signals:
+        kis_check = KisClient()
+        safe = []
+        for s in signals:
+            is_risky, reason = kis_check.check_safety(s["ticker"])
+            if is_risky:
+                print(f"  ⚠️ [{s['ticker']}] {s.get('name','?')} 제외: {reason}")
+            else:
+                safe.append(s)
+        signals = safe
+    # 기록(all_signals_log)과 재계산 비교
+    try:
+        rec = json.loads((ALL_SIGNALS_LOG_DIR / f"{sig_str}.json").read_text())
+        rec_tk = [r.get("ticker") for r in rec.get("records", [])]
+    except Exception:
+        rec_tk = None
+    new_tk = [s["ticker"] for s in signals]
+    # 보유 현황: holdings.json 복사본으로만 계산 (저장 안 함)
+    trade_dates_list = sorted(df["date"].unique())
+    h_copy = copy.deepcopy(load_holdings())
+    holdings_after, closed, _ = update_holdings(h_copy, df, signal_date, [], trade_dates_list)
+    today_added = [h for h in holdings_after if pd.Timestamp(h["entry_date"]) == pd.Timestamp(signal_date)]
+    body = format_message(sig_str, signals, holdings_after, closed, today_added,
+                          len(signals) >= N_PICK_MIN, kosdaq_hot_on(df, signal_date))
+    lines = [f"🔧 [수동 점검] {REPO_LABEL} 코드 {OPS_VERSION}",
+             f"신호일 {sig_str} 이미 처리됨 → 현재 코드로 재계산 (레포 저장 없음)",
+             f"데이터 마지막일 {pd.Timestamp(df['date'].max()).strftime('%Y-%m-%d')}"]
+    if rec_tk is None:
+        lines.append("기록 비교: 기록 파일 읽기 실패")
+    elif sorted(rec_tk) == sorted(new_tk):
+        lines.append(f"기록 비교: 일치 ({len(new_tk)}종목)")
+    else:
+        lines.append(f"기록 비교: 불일치 — 기록 {rec_tk} / 재계산 {new_tk}")
+    lines += ["", body, ""]
+    # 처분 준비 미리보기: 발송 이력 무시하고 현재 -5% 이하 전부 (발송 이력은 수정 안 함)
+    sent = {}
+    if DROP_ALERT_PATH.exists():
+        try:
+            sent = json.loads(DROP_ALERT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            sent = {}
+    alerts = compute_drop_alerts(df, signal_date, ALL_SIGNALS_LOG_DIR, {})
+    if alerts:
+        lines.append(f"[처분 준비 대상 미리보기] {len(alerts)}개")
+        for a in alerts:
+            mark = " (알림 발송됨)" if a["key"] in sent else " (미발송)"
+            lines.append(f"- [{a['ticker']}] {a['name']}{mark}")
+            lines.append(f"  진입 {a['entry_date']} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
+    else:
+        lines.append("[처분 준비 대상 미리보기] 없음")
+    msg = "\n".join(lines)
+    print(msg)
+    send_telegram(msg)
+
 def main():
     SIG_DIR.mkdir(parents=True, exist_ok=True)
     ALL_SIGNALS_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -899,6 +963,12 @@ def main():
     # 필요한지"를 정확히 판단할 수 있다.
     signal_all_log_path = ALL_SIGNALS_LOG_DIR / f"{signal_date_str}.json"
     already_done = signal_all_log_path.exists()
+
+    if already_done and IS_MANUAL_RUN:
+        # 2026-10-15 (ops v8.2): 수동 실행 = 점검 모드 (저장 없이 재계산 결과를 텔레그램으로)
+        print(f"{signal_date_str} 이미 처리됨 — 수동 실행이므로 점검 모드")
+        run_manual_check(df, signal_date)
+        return
 
     if already_done:
         if report_is_weekend or report_is_holiday:
