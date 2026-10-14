@@ -36,6 +36,9 @@ N_PICK_MIN = 1  # 2026-10-13: 종목 단위 검증 기준(같은 날 1종목도 
 HOLD_DAYS = 10  # 2026-10-13: T+10 종가 청산 (설계구간 h10 검증). 2026-10-14부터 매수는 T+1 종가
 DATA_READY_HOUR_KST = 18  # 2026-10-13: 장마감(15:30) 후 확정 자료만 사용. 이 시각(KST) 전에는 '전 거래일'까지만 사용 (정규 cron 20:00)
 DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이하이면 처분 준비 알림
+# 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
+#   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
+CLOSE_ENTRY_FROM = "2026-10-14"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
 #   T+1 종가 진입(T+1 종가가 신호일 종가 대비 +29% 이상이면 미체결, 슬롯은 점유) · 신호일 등락률 <= 10% · KOSDAQ 60일선 +4.5% 초과일 신호 무시
 GAP_CAP = 10.0          # 신호일 등락률(%) 상한
@@ -531,6 +534,11 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
                             h["unfilled"] = True
                             h["entry_t1_date"] = str(t1_date.date())
 
+            # 2026-10-14 (ops v8.1): 청산 예정일(표시용) = 신호일 + HOLD_DAYS 거래일, 아직 데이터에 없으면 None
+            if entry_date in date_idx:
+                x_i = date_idx[entry_date] + HOLD_DAYS
+                h["exit_date_planned"] = str(trade_dates[x_i].date()) if x_i < len(trade_dates) else None
+
             row = df[(df["ticker"]==h["ticker"]) & (df["date"]==target_d)]
             if len(row) > 0:
                 cur_price = float(row["종가"].iloc[0])
@@ -555,7 +563,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
                 "signal_score": float(s["signal_score"]),
                 "n_signals": int(s["n_signals"]),
                 "entry_price": None,  # T+1 종가에 결정됨
-                "exit_date_planned": str(trade_dates[min(date_idx[target_d] + HOLD_DAYS, len(trade_dates)-1)].date()) if target_d in date_idx else str((target_d + pd.Timedelta(days=14)).date()),
+                "exit_date_planned": None,  # 2026-10-14 (ops v8.1): T+HOLD_DAYS 거래일이 데이터에 생기면 매 실행에서 채움 (표시용, 청산은 days_held 기준)
                 "weight": MAX_WEIGHT,
                 "current_price": None,
                 "current_ret": None,
@@ -697,6 +705,7 @@ def compute_drop_alerts(df, today, log_dir, sent):
                     "key": key, "ticker": tkr, "name": rec.get("name") or "?",
                     "entry_date": ed, "entry_price": float(ep), "close": cp,
                     "ret": ret, "exit_planned": xd,
+                    "entry_basis": "종가" if pd.Timestamp(ed) >= pd.Timestamp(CLOSE_ENTRY_FROM) else "시가",
                 })
     return out
 
@@ -716,7 +725,7 @@ def run_drop_alerts(df, signal_date):
     lines = [f"🔻 {REPO_LABEL} 처분 준비", f"{sig_str} {weekday_kr(sig_str)} 종가 기준, 진입가 대비 -5% 이하", ""]
     for a in alerts:
         lines.append(f"- [{a['ticker']}] {a['name']}")
-        lines.append(f"  진입 {a['entry_date']} 종가 {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
+        lines.append(f"  진입 {a['entry_date']} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
         if a["exit_planned"]:
             lines.append(f"  청산예정(T+{HOLD_DAYS}) {a['exit_planned']}")
     msg = "\n".join(lines)
@@ -1046,6 +1055,7 @@ def main():
                     p0 = float(p0_row["종가"].iloc[0]) if len(p0_row) > 0 else float("nan")
                     if cp1 > 0 and p0 > 0 and cp1 / p0 < FILL_LIMIT:
                         rec["virtual_entry_price"] = cp1
+                        rec["entry_basis"] = "T+1_close"  # 2026-10-14 (ops v8.1). 이 필드 없는 기록 = T+1 시가(구규칙)
                     else:
                         rec["status"] = "unfilled"
                     modified = True
