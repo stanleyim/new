@@ -33,9 +33,15 @@ LIQ_TH = 30e8
 K_MAX = 5
 MAX_WEIGHT = 0.25
 N_PICK_MIN = 1  # 2026-10-13: 종목 단위 검증 기준(같은 날 1종목도 진입)
-HOLD_DAYS = 10  # 2026-10-13: T+1 시가 매수 -> T+10 종가 청산 (설계구간 h10 검증)
+HOLD_DAYS = 10  # 2026-10-13: T+10 종가 청산 (설계구간 h10 검증). 2026-10-14부터 매수는 T+1 종가
 DATA_READY_HOUR_KST = 18  # 2026-10-13: 장마감(15:30) 후 확정 자료만 사용. 이 시각(KST) 전에는 '전 거래일'까지만 사용 (정규 cron 20:00)
-DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 시가) 대비 -5% 이하이면 처분 준비 알림
+DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이하이면 처분 준비 알림
+# 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
+#   T+1 종가 진입(T+1 종가가 신호일 종가 대비 +29% 이상이면 미체결, 슬롯은 점유) · 신호일 등락률 <= 10% · KOSDAQ 60일선 +4.5% 초과일 신호 무시
+GAP_CAP = 10.0          # 신호일 등락률(%) 상한
+HOT_THR = 0.045         # KOSDAQ 종가 / 60일 이동평균 - 1 > 이 값이면 과열일
+FILL_LIMIT = 1.29       # T+1 종가 / 신호일 종가 >= 이 값이면 미체결
+KOSDAQ_IDX_CODE = "2001"  # pykrx(KRX) 코스닥 지수 코드 (검증 데이터 pit_extra.py와 동일)
 DROP_ALERT_PATH = OUT / "drop_alerts_sent.json"  # 이미 보낸 알림 (종목당 1회)
 
 REPO_LABEL = "stanleyim/new"
@@ -253,6 +259,38 @@ class KisClient:
                 continue
         return rows
 
+# ===== KOSDAQ 과열 판정 (KRX 지수, pykrx) =====
+def fetch_kosdaq_hot(end_date):
+    """코스닥 지수 종가로 날짜별 과열 여부 dict {date: bool}. 60일 이동평균이 완성된 날만 포함.
+    조회 실패 시 None (호출 측에서 신규 편입 보류). KRX_ID·KRX_PW 환경변수로 pykrx 로그인(pit_extra.py와 동일)."""
+    try:
+        from pykrx import stock
+        end_date = pd.Timestamp(end_date)
+        start = (end_date - pd.Timedelta(days=200)).strftime("%Y%m%d")
+        x = stock.get_index_ohlcv_by_date(start, end_date.strftime("%Y%m%d"), KOSDAQ_IDX_CODE)
+        if x is None or len(x) == 0:
+            print("[WARN] 코스닥 지수 조회 결과 없음")
+            return None
+        px = pd.Series(pd.to_numeric(x["종가"], errors="coerce").values, index=pd.to_datetime(x.index)).sort_index()
+        px = px[px > 0]
+        ma = px.rolling(60).mean()
+        hot = (px / ma - 1.0) > HOT_THR
+        hot = hot[ma.notna()]
+        print(f"코스닥 지수 {len(px)}일 조회 (마지막 {px.index.max().date()}, 과열={bool(hot.iloc[-1]) if len(hot) else '?'})")
+        return {pd.Timestamp(d): bool(v) for d, v in hot.items()}
+    except Exception as e:
+        print(f"[WARN] 코스닥 지수 조회 실패: {type(e).__name__}: {str(e)[:200]}")
+        return None
+
+def kosdaq_hot_on(df, d):
+    """d일 과열 여부: True/False, 지수 미확인이면 None."""
+    if "kosdaq_hot" not in df.columns:
+        return None
+    v = df.loc[df["date"] == pd.to_datetime(d), "kosdaq_hot"]
+    if len(v) == 0 or pd.isna(v.iloc[0]):
+        return None
+    return bool(v.iloc[0])
+
 # ===== 데이터 fetch + append =====
 def data_cutoff_date():
     """사용 가능한 마지막 날짜(KST). DATA_READY_HOUR_KST 전이면 전날, 이후면 당일."""
@@ -428,7 +466,12 @@ def select_signals(df, target_date):
     today_df = today_df[today_df["n_signals"] >= 3]
     today_df = today_df.dropna(subset=["거래대금_20ma"])
     today_df = today_df[today_df["거래대금_20ma"] >= LIQ_TH]
+    # 2026-10-14 C단계 통과 규칙: 등락률 상한 + KOSDAQ 과열일 무시 (상위 5 선정 전에 적용 = 검증과 동일 순서)
+    today_df = today_df[today_df["gap"] <= GAP_CAP]   # 등락률 결측은 제외
     if len(today_df) == 0:
+        return []
+    hot = kosdaq_hot_on(df, target_date)
+    if hot is None or hot:   # 지수 미확인(None)이면 판정 불가 -> 신규 후보 보류, 과열(True)이면 무시
         return []
     top = today_df.nlargest(min(5, len(today_df)), "signal_score")
     return top.to_dict("records")
@@ -458,7 +501,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
     
     for h in holdings:
         entry_date = pd.to_datetime(h["entry_date"])
-        # T+1 = entry_date 다음 거래일 시가 매수 → T+HOLD_DAYS 종가 매도
+        # T+1 = entry_date 다음 거래일 종가 매수 → T+HOLD_DAYS 종가 매도 (2026-10-14 시가→종가)
         # days_held == HOLD_DAYS 인 날 종가로 current_ret 갱신, HOLD_DAYS+1 에 종결 처리
         if entry_date in date_idx and target_d in date_idx:
             entry_i = date_idx[entry_date]
@@ -470,16 +513,22 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
         if days_held >= HOLD_DAYS + 1:  # T+HOLD_DAYS 종가까지 반영 후 종결
             closed.append(h)
         else:
-            # entry_price 자동 채움: T+1 시가 = entry_date 다음 영업일 시가
-            if h.get("entry_price") is None and entry_date in date_idx:
+            # entry_price 자동 채움: T+1 종가 = entry_date 다음 영업일 종가.
+            # T+1 종가가 신호일 종가 대비 FILL_LIMIT(+29%) 이상이거나 가격이 무효면 미체결(슬롯은 T+HOLD_DAYS까지 점유, 수익 0)
+            if h.get("entry_price") is None and not h.get("unfilled") and entry_date in date_idx:
                 t1_i = date_idx[entry_date] + 1
                 if t1_i < len(trade_dates):
                     t1_date = trade_dates[t1_i]
                     t1_row = df[(df["ticker"]==h["ticker"]) & (df["date"]==t1_date)]
+                    p0_row = df[(df["ticker"]==h["ticker"]) & (df["date"]==entry_date)]
                     if len(t1_row) > 0:
-                        t1_open = float(t1_row["시가"].iloc[0])
-                        if t1_open > 0:
-                            h["entry_price"] = t1_open
+                        t1_close = float(t1_row["종가"].iloc[0])
+                        p0 = float(p0_row["종가"].iloc[0]) if len(p0_row) > 0 else float("nan")
+                        if t1_close > 0 and p0 > 0 and t1_close / p0 < FILL_LIMIT:
+                            h["entry_price"] = t1_close
+                            h["entry_t1_date"] = str(t1_date.date())
+                        else:
+                            h["unfilled"] = True
                             h["entry_t1_date"] = str(t1_date.date())
 
             row = df[(df["ticker"]==h["ticker"]) & (df["date"]==target_d)]
@@ -505,7 +554,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
                 "name": s.get("name","?"),
                 "signal_score": float(s["signal_score"]),
                 "n_signals": int(s["n_signals"]),
-                "entry_price": None,  # T+1 시가에 결정됨
+                "entry_price": None,  # T+1 종가에 결정됨
                 "exit_date_planned": str(trade_dates[min(date_idx[target_d] + HOLD_DAYS, len(trade_dates)-1)].date()) if target_d in date_idx else str((target_d + pd.Timedelta(days=14)).date()),
                 "weight": MAX_WEIGHT,
                 "current_price": None,
@@ -547,8 +596,12 @@ def save_last_notified_date(d) -> None:
         encoding="utf-8",
     )
 
-def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid):
+def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid, hot_state=False):
     lines = [f"📊 {REPO_LABEL}", f"{target_date} {weekday_kr(target_date)} (20:00 산출)", ""]
+    if hot_state is None:
+        lines += ["⚠️ 코스닥 지수 조회 실패 — 과열 판정 불가로 신규 후보 보류 (보유 청산·알림은 정상)", ""]
+    elif hot_state:
+        lines += [f"🔥 코스닥 과열일(60일선 +{HOT_THR*100:.1f}% 초과) — 신규 후보 무시", ""]
 
     if len(signals) > 0:
         lines.append(f"[매수 후보] {len(signals)}개")
@@ -568,7 +621,7 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
     if new_added:
         lines.append(f"[신규 진입] {len(new_added)}개")
         for h in new_added:
-            lines.append(f"- [{h['ticker']}] {h['name']}: T+1 시가 매수 예정")
+            lines.append(f"- [{h['ticker']}] {h['name']}: T+1 종가 매수 예정 (신호일 대비 +29% 이상이면 미체결)")
         lines.append("")
 
     open_h = [h for h in holdings_after if h not in new_added]
@@ -576,7 +629,7 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
         lines.append(f"[보유 모니터링] {len(open_h)}개")
         for h in open_h:
             cur = h.get("current_ret")
-            cur_str = f"{cur*100:+.2f}%" if cur is not None else "?"
+            cur_str = "미체결" if h.get("unfilled") else (f"{cur*100:+.2f}%" if cur is not None else "?")
             lines.append(f"- {h['entry_date']} [{h['ticker']}] {h['name']}: {h.get('days_held',0)}d, {cur_str}")
         lines.append("")
 
@@ -585,7 +638,7 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
         for c in closed:
             cur = c.get("current_ret")
             net = (cur - TOTAL_COST) if cur is not None else None
-            net_str = f"{net*100:+.2f}%" if net is not None else "?"
+            net_str = "미체결(0%)" if c.get("unfilled") else (f"{net*100:+.2f}%" if net is not None else "?")
             lines.append(f"- {c['entry_date']} [{c['ticker']}] {c['name']}: 종결, net {net_str}")
 
     return "\n".join(lines)
@@ -663,7 +716,7 @@ def run_drop_alerts(df, signal_date):
     lines = [f"🔻 {REPO_LABEL} 처분 준비", f"{sig_str} {weekday_kr(sig_str)} 종가 기준, 진입가 대비 -5% 이하", ""]
     for a in alerts:
         lines.append(f"- [{a['ticker']}] {a['name']}")
-        lines.append(f"  진입 {a['entry_date']} 시가 {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
+        lines.append(f"  진입 {a['entry_date']} 종가 {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
         if a["exit_planned"]:
             lines.append(f"  청산예정(T+{HOLD_DAYS}) {a['exit_planned']}")
     msg = "\n".join(lines)
@@ -700,6 +753,8 @@ def main():
     print("\n[2] Feature 계산...")
     df = compute_features(ohlcv, flow, short)
     df = add_cap_class(df, universe)
+    hot_map = fetch_kosdaq_hot(df["date"].max())
+    df["kosdaq_hot"] = df["date"].map(hot_map) if hot_map else np.nan
 
     # signal_date를 소급 검사보다 먼저 확정한다.
     # target_date_str은 실행 시각의 wall-clock일 뿐이라, cron 지연이 자정을
@@ -821,6 +876,11 @@ def main():
             past_msg_lines.append(f"\nn_pick: {len(past_signals)}/5")
         else:
             past_msg_lines.append("[매수 후보] 없음 (신호 미발생)")
+        _ph = kosdaq_hot_on(df, past_d)
+        if _ph is None:
+            past_msg_lines.append("⚠️ 코스닥 지수 미확인 — 신규 후보 보류")
+        elif _ph:
+            past_msg_lines.append("🔥 코스닥 과열일 — 신규 후보 무시")
         past_msg = "\n".join(past_msg_lines)
         print(past_msg)
         send_telegram(past_msg)
@@ -956,7 +1016,7 @@ def main():
         file_sig_idx = date_to_idx.get(file_sig_d) if file_sig_d is not None else None
 
         for rec in records:
-            if rec.get("status") == "closed":
+            if rec.get("status") in ("closed", "unfilled"):
                 continue
             tkr = rec.get("ticker")
 
@@ -975,15 +1035,22 @@ def main():
             ve_date = rec.get("virtual_entry_date")
             vx_date = rec.get("virtual_exit_date_planned")
 
-            # T+1 entry_price 채움 (시가)
+            # T+1 entry_price 채움 (2026-10-14: 시가→종가). 신호일 종가 대비 +29% 이상·가격 무효면 미체결(status=unfilled)
             if rec.get("virtual_entry_price") is None and ve_date is not None:
                 ve_d = pd.to_datetime(ve_date)
                 row = df[(df["ticker"] == tkr) & (df["date"] == ve_d)]
                 if len(row) > 0:
-                    op = float(row["시가"].iloc[0])
-                    if op > 0:
-                        rec["virtual_entry_price"] = op
-                        modified = True
+                    cp1 = float(row["종가"].iloc[0])
+                    ve_i = date_to_idx.get(ve_d)
+                    p0_row = df[(df["ticker"] == tkr) & (df["date"] == trade_dates_all[ve_i - 1])] if ve_i else df.iloc[0:0]
+                    p0 = float(p0_row["종가"].iloc[0]) if len(p0_row) > 0 else float("nan")
+                    if cp1 > 0 and p0 > 0 and cp1 / p0 < FILL_LIMIT:
+                        rec["virtual_entry_price"] = cp1
+                    else:
+                        rec["status"] = "unfilled"
+                    modified = True
+                    if rec["status"] == "unfilled":
+                        continue
 
             # T+HOLD_DAYS exit_price 채움 (종가) + 수익 계산
             if rec.get("virtual_exit_price") is None and vx_date is not None:
@@ -1007,7 +1074,7 @@ def main():
         print(f"all_signals_log update: {updated_count}개 파일")
 
     print("\n[5] Telegram...")
-    msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid)
+    msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid, kosdaq_hot_on(df, signal_date))
     send_telegram(msg)
     save_last_notified_date(signal_date)
     print(msg)
