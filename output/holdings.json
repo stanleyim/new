@@ -1,1 +1,15 @@
-[]
+[
+  {
+    "entry_date": "2026-10-14 00:00:00",
+    "ticker": "011200",
+    "name": "HMM",
+    "signal_score": 6.28,
+    "n_signals": 4,
+    "entry_price": null,
+    "exit_date_planned": "2026-10-14",
+    "weight": 0.25,
+    "current_price": null,
+    "current_ret": null,
+    "days_held": 0
+  }
+]
