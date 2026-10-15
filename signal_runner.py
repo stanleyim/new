@@ -41,7 +41,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.3.2"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.4"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -816,6 +816,93 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
         lines.pop()
     return "\n".join(lines)
 
+# 2026-10-16 (ops v8.4): 포워드 v8 집계 — 텔레그램 맨 끝 3줄 (표시 전용, 파일 저장 없음)
+#   계산 = 백테스트 sig_grid_cell.simulate_equity_close와 같은 방식.
+#   대상: holdings(미청산) + results(종결) 중 신호일 >= CLOSE_ENTRY_FROM (구규칙 기록 제외)
+#   매수: 신호일 다음 거래일(E+1) 종가 = 기록의 entry_price, 금액 = 그날 계좌(당일 청산 반영 후·매수 전) x FWD_W
+#   미체결(기록 unfilled 또는 가격 없음): 현금 유지. 매도: E+HOLD_DAYS 종가 x (1 - TOTAL_COST)
+#   계좌 = 현금 + 보유 수량 x 종가(가격 없는 날은 직전 종가), MDD = 일별 계좌 고점 대비 최저
+FWD_W = 0.20
+FWD_WARN = -0.20
+FWD_STOP = -0.35
+FWD_GATE_TRADES = 30
+FWD_GATE_DAYS = 120
+
+def _p2(x):
+    return round(x * 100, 2) + 0.0  # -0.00 방지
+
+def forward_v8_lines(df, cur_date, positions):
+    trade_dates, idx = _date_index(df)
+    ci = idx.get(pd.Timestamp(cur_date).normalize())
+    if ci is None:
+        raise ValueError(f"기준일 {cur_date} 거래일 아님")
+    start = pd.Timestamp(CLOSE_ENTRY_FROM)
+    ents = {}
+    for p in positions:
+        e = pd.Timestamp(p["entry_date"]).normalize()
+        if e < start:
+            continue
+        ei = idx.get(e)
+        if ei is None:
+            raise ValueError(f"신호일 {e.date()} 거래일 아님 ({p.get('ticker')})")
+        ep = p.get("entry_price")
+        ep = float(ep) if (ep is not None and not p.get("unfilled") and float(ep) > 0) else None
+        ents[(ei, str(p["ticker"]))] = ep
+    buys = {}
+    for (ei, tk), ep in ents.items():
+        if ei + 1 <= ci:
+            buys.setdefault(ei + 1, []).append(((ei, tk), ep))
+    if not buys:
+        return ["[포워드 v8] 아직 매수 없음"]
+    first = min(buys)
+    tks = sorted({tk for _, tk in ents})
+    sub = df[df["ticker"].isin(tks) & (df["date"] <= trade_dates[ci])][["date", "ticker", "종가"]]
+    sub = sub.drop_duplicates(["date", "ticker"], keep="first")
+    pc = sub.pivot(index="date", columns="ticker", values="종가").reindex(columns=tks).astype(float)
+    pc = pc.where(pc > 0).ffill().reindex(trade_dates[: ci + 1]).ffill()
+    C = pc.values
+    col = {t: j for j, t in enumerate(tks)}
+
+    def px(t, tk):
+        v = C[t, col[tk]]
+        if not np.isfinite(v):
+            raise ValueError(f"{tk} {pd.Timestamp(trade_dates[t]).date()} 가격 없음")
+        return v
+
+    cash, peak, mdd, n_closed = 1.0, 1.0, 0.0, 0
+    inv = {}
+    eq = 1.0
+    for t in range(first, ci + 1):
+        for key in list(inv):
+            if t == key[0] + HOLD_DAYS:
+                cash += inv.pop(key) * px(t, key[1]) * (1.0 - TOTAL_COST)
+                n_closed += 1
+        eq_pre = cash + sum(u * px(t, k[1]) for k, u in inv.items())
+        for key, ep in buys.get(t, []):
+            if ep is not None:
+                alloc = FWD_W * eq_pre
+                inv[key] = alloc / ep
+                cash -= alloc
+        eq = cash + sum(u * px(t, k[1]) for k, u in inv.items())
+        peak = max(peak, eq)
+        mdd = min(mdd, eq / peak - 1.0)
+    dd = eq / peak - 1.0
+    days = ci - first + 1
+    status = "⛔중단" if dd <= FWD_STOP else "⚠️경고" if dd <= FWD_WARN else "정상"
+    verdict = "판정 가능" if (n_closed >= FWD_GATE_TRADES and days >= FWD_GATE_DAYS) else "판정 보류"
+    return [
+        f"[포워드 v8] {_md(trade_dates[first])} 시작 · {days}거래일 · {status}",
+        f"계좌 {_p2(eq - 1.0):+.2f}% · 고점 대비 {_p2(dd):.2f}% · MDD {_p2(mdd):.2f}% (경고 −20 / 중단 −35)",
+        f"청산 {n_closed}/{FWD_GATE_TRADES}건 · {days}/{FWD_GATE_DAYS}거래일 · 보유 {len(inv)}/{K_MAX} → {verdict}",
+    ]
+
+def forward_v8_safe(df, cur_date, positions):
+    try:
+        return forward_v8_lines(df, cur_date, positions)
+    except Exception as e:
+        print(f"[WARN] 포워드 v8 집계 실패: {type(e).__name__}: {e}")
+        return [f"[포워드 v8] 집계 실패: {type(e).__name__}: {str(e)[:120]}"]
+
 def _send_telegram_checked(text):
     """send_telegram과 동일한 호출이되 성공 여부를 반환 (실패 시 알림 상태를 저장하지 않기 위함)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -959,6 +1046,8 @@ def run_manual_check(df, signal_date):
             lines.append(f"  매수 {_md(a['entry_date'])} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} · {exit_label(xd, n)}")
     else:
         lines.append("[처분 준비 대상 미리보기] 없음")
+    # 2026-10-16 (ops v8.4): 포워드 v8 집계 3줄 (정규 실행과 같은 계산, 저장 없음)
+    lines += [""] + forward_v8_safe(df, signal_date, holdings_after + load_results() + closed)
     msg = "\n".join(lines)
     print(msg)
     send_telegram(msg)
@@ -1318,6 +1407,8 @@ def main():
 
     print("\n[5] Telegram...")
     msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid, kosdaq_hot_on(df, signal_date), df=df)
+    # 2026-10-16 (ops v8.4): 맨 끝에 포워드 v8 집계 3줄 (results.json은 위에서 이번 청산까지 저장됨)
+    msg += "\n\n" + "\n".join(forward_v8_safe(df, signal_date, holdings_after + load_results()))
     send_telegram(msg)
     save_last_notified_date(signal_date)
     print(msg)
