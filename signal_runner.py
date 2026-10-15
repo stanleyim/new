@@ -41,7 +41,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.3"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.3.1"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -986,7 +986,7 @@ def main():
     available_dates = sorted(df["date"].unique())
     if target_date not in available_dates:
         signal_date = available_dates[-1]
-        print(f"오늘 데이터 없음, 직전: {signal_date}")
+        print(f"오늘 데이터 없음, 직전: {pd.Timestamp(signal_date).strftime('%Y-%m-%d')}")
     else:
         signal_date = target_date
 
@@ -1173,8 +1173,8 @@ def main():
     sig_path.write_text(json.dumps({
         "date": signal_date_str,
         "run_at_kst": target_date_str,
-        "signal_date": str(signal_date),
-        "signals": [{k:(str(v) if isinstance(v,(pd.Timestamp,np.generic)) else v) for k,v in s.items() if k not in ["high_20d","high_60d","hl_range"]} for s in signals],
+        "signal_date": pd.Timestamp(signal_date).strftime("%Y-%m-%d"),  # 2026-10-16 (ops v8.3.1): 이전 파일은 "YYYY-MM-DD 00:00:00"
+        "signals": [{k:(v.strftime("%Y-%m-%d") if isinstance(v, pd.Timestamp) else str(v) if isinstance(v, np.generic) else v) for k,v in s.items() if k not in ["high_20d","high_60d","hl_range"]} for s in signals],  # v8.3.1: 날짜는 YYYY-MM-DD (그 외 값은 기존과 동일)
         "n_pick_valid": n_pick_valid,
         "n_open_after": len(holdings_after),
         "n_closed": len(closed),
