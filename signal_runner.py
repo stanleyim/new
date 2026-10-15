@@ -4,6 +4,7 @@ v7 final forward test runner — KIS API 버전
 """
 import os
 import copy
+import math
 import json
 import sys
 import time
@@ -40,7 +41,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.2"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.3"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -561,7 +562,7 @@ def update_holdings(holdings, df, target_date, signals, trade_dates):
         signals_dedup = [s for s in signals if s["ticker"] not in open_tickers]
         for s in signals_dedup[:can_add]:
             new_added.append({
-                "entry_date": str(target_date),
+                "entry_date": pd.Timestamp(target_date).strftime("%Y-%m-%d"),  # 2026-10-16 (ops v8.3): 신호일. 이전엔 "YYYY-MM-DD 00:00:00"으로 저장됨(읽을 때 날짜로 변환하므로 계산 동일)
                 "ticker": s["ticker"],
                 "name": s.get("name","?"),
                 "signal_score": float(s["signal_score"]),
@@ -580,6 +581,147 @@ def weekday_kr(date_str):
     """'YYYY-MM-DD' -> '(월)'~'(일)' 한글 요일 라벨"""
     wd = ["월","화","수","목","금","토","일"]
     return f"({wd[pd.Timestamp(date_str).weekday()]})"
+
+# ===== 2026-10-16 (ops v8.3) 텔레그램 표시 보조 — 표시 전용 (기록·판정·청산 무변경) =====
+def _krx_closed(d, kr_h):
+    """미래 거래일 예상용 KRX 휴장 판정: 주말·공휴일(holidays)·근로자의날(5/1)·연말 휴장일(12/31, 주말·공휴일이면 직전 영업일)."""
+    d = pd.Timestamp(d).normalize()
+    if d.weekday() >= 5 or d.date() in kr_h or (d.month == 5 and d.day == 1):
+        return True
+    if d.month == 12:
+        last = pd.Timestamp(year=d.year, month=12, day=31)
+        while last.weekday() >= 5 or last.date() in kr_h:
+            last -= pd.Timedelta(days=1)
+        if d == last:
+            return True
+    return False
+
+def trade_date_after(trade_dates, base_idx, k):
+    """trade_dates[base_idx]에서 k거래일 뒤 날짜. 데이터에 있으면 실제 거래일, 없으면 휴장 달력으로 예상."""
+    tgt = base_idx + k
+    if tgt < len(trade_dates):
+        return pd.Timestamp(trade_dates[tgt])
+    import holidays
+    kr_h = holidays.SouthKorea()
+    d = pd.Timestamp(trade_dates[-1]).normalize()
+    remain = tgt - (len(trade_dates) - 1)
+    while remain > 0:
+        d += pd.Timedelta(days=1)
+        if not _krx_closed(d, kr_h):
+            remain -= 1
+    return d
+
+def fill_limit_price(p0):
+    """미체결 기준가: T+1 종가가 이 가격 이상이면 미체결. 판정식(T+1 종가 / 신호일 종가 < FILL_LIMIT)과 같은 결과가 나오는 최소 정수 가격."""
+    p0 = float(p0)
+    x = int(math.ceil(p0 * FILL_LIMIT))
+    while x - 1 > 0 and (x - 1) / p0 >= FILL_LIMIT:
+        x -= 1
+    while x / p0 < FILL_LIMIT:
+        x += 1
+    return x
+
+def _md(d):
+    return pd.Timestamp(d).strftime("%m-%d")
+
+def _entry_basis(entry_date):
+    return "종가" if pd.Timestamp(entry_date) >= pd.Timestamp(CLOSE_ENTRY_FROM) else "시가"
+
+def _date_index(df):
+    trade_dates = sorted(df["date"].unique())
+    return trade_dates, {pd.Timestamp(d).normalize(): i for i, d in enumerate(trade_dates)}
+
+def exit_schedule(trade_dates, idx, sig_date, cur_date, stored=None):
+    """(청산일, 남은 거래일 수). 기록에 청산 예정일(stored)이 있으면 그 값, 없으면 신호일 + HOLD_DAYS 거래일(데이터 밖은 휴장 달력 예상). 계산 불가면 (None, None)."""
+    ci = idx.get(pd.Timestamp(cur_date).normalize())
+    if ci is None:
+        return None, None
+    if stored:
+        xi = idx.get(pd.Timestamp(stored).normalize())
+        if xi is not None:
+            return pd.Timestamp(stored), xi - ci
+    if not sig_date:
+        return None, None
+    si = idx.get(pd.Timestamp(sig_date).normalize())
+    if si is None:
+        return None, None
+    return trade_date_after(trade_dates, si, HOLD_DAYS), si + HOLD_DAYS - ci
+
+def exit_label(xd, n):
+    if xd is None:
+        return "청산일 ?"
+    if n == 0:
+        return f"청산 {_md(xd)} 오늘(종가 없음)"
+    if n < 0:
+        return f"청산 {_md(xd)} 지남(종가 없음)"
+    if n == 1:
+        return f"청산 {_md(xd)} (D-1 ⏰내일)"
+    return f"청산 {_md(xd)} (D-{n})"
+
+def build_position_lines(df, signal_date):
+    """all_signals_log 기준 [보유]·[오늘 청산]·[오늘 미체결] 줄 (읽기 전용, 파일 쓰기 없음)."""
+    sd = pd.Timestamp(signal_date).normalize()
+    sd_str = sd.strftime("%Y-%m-%d")
+    trade_dates, idx = _date_index(df)
+    day = df[df["date"] == sd].drop_duplicates("ticker")
+    px = dict(zip(day["ticker"].astype(str), day["종가"]))
+    opens, closes, unfilled = [], [], []
+    for lf in sorted(ALL_SIGNALS_LOG_DIR.glob("*.json")):
+        try:
+            data = json.loads(lf.read_text())
+        except Exception:
+            continue
+        for rec in data.get("records", []):
+            st = rec.get("status")
+            if st == "closed":
+                if rec.get("virtual_exit_date_planned") == sd_str:
+                    closes.append(rec)
+                continue
+            if st == "unfilled":
+                if rec.get("virtual_entry_date") == sd_str:
+                    unfilled.append(rec)
+                continue
+            ep, ed = rec.get("virtual_entry_price"), rec.get("virtual_entry_date")
+            if not ep or ep <= 0 or not ed or pd.Timestamp(ed) > sd:
+                continue  # 아직 매수 전(오늘 신호 = [신규 진입]에 표시)
+            xd, n = exit_schedule(trade_dates, idx, rec.get("signal_date"), sd, rec.get("virtual_exit_date_planned"))
+            opens.append((xd if xd is not None else pd.Timestamp.max, str(rec.get("signal_date")), str(rec.get("ticker")), rec, xd, n))
+    lines = []
+    if opens:
+        opens.sort(key=lambda t: (t[0], t[1], t[2]))
+        lines.append(f"[보유] {len(opens)}개 (청산 빠른 순)")
+        for i, (_, _, tkr, rec, xd, n) in enumerate(opens, 1):
+            ep = float(rec["virtual_entry_price"])
+            cp = px.get(tkr)
+            cp = float(cp) if cp is not None and float(cp) > 0 else None
+            ret = f"{(cp / ep - 1) * 100:+.2f}%" if cp else "?"
+            lines.append(f"{i}. {rec.get('name') or '?'} {ret} | {exit_label(xd, n)}")
+            lines.append(f"   {tkr} · 매수 {_md(rec['virtual_entry_date'])} {_entry_basis(rec['virtual_entry_date'])} "
+                         f"{ep:,.0f} → {f'{cp:,.0f}' if cp else '?'}")
+    else:
+        lines.append("[보유] 없음")
+    lines.append("")
+    if closes:
+        lines.append(f"[오늘 청산] {len(closes)}개 (T+{HOLD_DAYS} 종가, 비용 차감)")
+        for rec in closes:
+            net = rec.get("net_ret")
+            net_s = f"{net * 100:+.2f}%" if net is not None else "?"
+            lines.append(f"- {rec.get('name') or '?'} net {net_s}")
+            lines.append(f"  {rec.get('ticker')} · 매수 {_md(rec['virtual_entry_date'])} {_entry_basis(rec['virtual_entry_date'])} "
+                         f"{float(rec['virtual_entry_price']):,.0f} → 청산 {float(rec['virtual_exit_price']):,.0f}")
+        lines.append("")
+    if unfilled:
+        lines.append(f"[오늘 미체결] {len(unfilled)}개 (매수 안 함)")
+        for rec in unfilled:
+            tkr = str(rec.get("ticker"))
+            cp = px.get(tkr)
+            p0 = rec.get("signal_close")
+            if cp is not None and float(cp) > 0 and p0:
+                lines.append(f"- {rec.get('name') or '?'}: 종가 {float(cp):,.0f} ≥ 기준 {fill_limit_price(p0):,}")
+            else:
+                lines.append(f"- {rec.get('name') or '?'}: 가격 무효")
+        lines.append("")
+    return lines
 
 def next_business_day(d: pd.Timestamp) -> pd.Timestamp:
     """d 다음날부터 시작해서 토/일을 건너뛴 첫 평일을 반환 (공휴일 여부는 호출 측에서 별도 판정)."""
@@ -608,7 +750,7 @@ def save_last_notified_date(d) -> None:
         encoding="utf-8",
     )
 
-def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid, hot_state=False):
+def format_message(target_date, signals, holdings_after, closed, new_added, n_pick_valid, hot_state=False, df=None):
     lines = [f"📊 {REPO_LABEL}", f"{target_date} {weekday_kr(target_date)} (20:00 산출)", ""]
     if hot_state is None:
         lines += ["⚠️ 코스닥 지수 조회 실패 — 과열 판정 불가로 신규 후보 보류 (보유 청산·알림은 정상)", ""]
@@ -630,29 +772,33 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
         lines.append("[매수 후보] 없음 (신호 미발생)")
     lines.append("")
 
+    # 2026-10-16 (ops v8.3): 신규 진입 줄에 T+1 날짜·신호일 종가·미체결 기준가 표시
+    #   보유/청산은 all_signals_log 기준(처분 준비 알림과 같은 기준)으로 표시. holdings·results 저장 로직은 그대로
+    sig_close = {s["ticker"]: s.get("종가") for s in signals}
+    t1_str = ""
+    if df is not None:
+        trade_dates, idx = _date_index(df)
+        ci = idx.get(pd.Timestamp(target_date).normalize())
+        if ci is not None:
+            t1_str = f"({_md(trade_date_after(trade_dates, ci, 1))})"
     if new_added:
         lines.append(f"[신규 진입] {len(new_added)}개")
         for h in new_added:
-            lines.append(f"- [{h['ticker']}] {h['name']}: T+1 종가 매수 예정 (신호일 대비 +29% 이상이면 미체결)")
+            lines.append(f"- [{h['ticker']}] {h['name']}: T+1{t1_str} 종가 매수")
+            p0 = sig_close.get(h["ticker"])
+            if p0 is not None and float(p0) > 0:
+                lines.append(f"  신호일 종가 {float(p0):,.0f} · {fill_limit_price(p0):,} 이상이면 미체결")
+            else:
+                lines.append(f"  신호일 종가 대비 +{(FILL_LIMIT - 1) * 100:.0f}% 이상이면 미체결")
         lines.append("")
 
-    open_h = [h for h in holdings_after if h not in new_added]
-    if open_h:
-        lines.append(f"[보유 모니터링] {len(open_h)}개")
-        for h in open_h:
-            cur = h.get("current_ret")
-            cur_str = "미체결" if h.get("unfilled") else (f"{cur*100:+.2f}%" if cur is not None else "?")
-            lines.append(f"- {h['entry_date']} [{h['ticker']}] {h['name']}: {h.get('days_held',0)}d, {cur_str}")
-        lines.append("")
+    if df is not None:
+        lines += build_position_lines(df, target_date)
+    else:
+        lines += ["[보유] 표시 불가 (데이터 없음)", ""]
 
-    if closed:
-        lines.append(f"[종결 결과] {len(closed)}개")
-        for c in closed:
-            cur = c.get("current_ret")
-            net = (cur - TOTAL_COST) if cur is not None else None
-            net_str = "미체결(0%)" if c.get("unfilled") else (f"{net*100:+.2f}%" if net is not None else "?")
-            lines.append(f"- {c['entry_date']} [{c['ticker']}] {c['name']}: 종결, net {net_str}")
-
+    while lines and lines[-1] == "":
+        lines.pop()
     return "\n".join(lines)
 
 def _send_telegram_checked(text):
@@ -708,7 +854,7 @@ def compute_drop_alerts(df, today, log_dir, sent):
                 out.append({
                     "key": key, "ticker": tkr, "name": rec.get("name") or "?",
                     "entry_date": ed, "entry_price": float(ep), "close": cp,
-                    "ret": ret, "exit_planned": xd,
+                    "ret": ret, "exit_planned": xd, "signal_date": rec.get("signal_date"),
                     "entry_basis": "종가" if pd.Timestamp(ed) >= pd.Timestamp(CLOSE_ENTRY_FROM) else "시가",
                 })
     return out
@@ -726,12 +872,12 @@ def run_drop_alerts(df, signal_date):
     if not alerts:
         print("처분 준비 알림: 해당 없음")
         return
-    lines = [f"🔻 {REPO_LABEL} 처분 준비", f"{sig_str} {weekday_kr(sig_str)} 종가 기준, 진입가 대비 -5% 이하", ""]
+    lines = [f"🔻 {REPO_LABEL} 처분 준비", f"{sig_str} {weekday_kr(sig_str)} 종가 기준, 매수가 대비 -5% 이하", ""]
+    trade_dates, idx = _date_index(df)
     for a in alerts:
-        lines.append(f"- [{a['ticker']}] {a['name']}")
-        lines.append(f"  진입 {a['entry_date']} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
-        if a["exit_planned"]:
-            lines.append(f"  청산예정(T+{HOLD_DAYS}) {a['exit_planned']}")
+        xd, n = exit_schedule(trade_dates, idx, a.get("signal_date"), signal_date, a.get("exit_planned"))
+        lines.append(f"- [{a['ticker']}] {a['name']} {a['ret']*100:+.2f}% | {exit_label(xd, n)}")
+        lines.append(f"  매수 {_md(a['entry_date'])} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f}")
     msg = "\n".join(lines)
     print(msg)
     if _send_telegram_checked(msg):
@@ -769,7 +915,7 @@ def run_manual_check(df, signal_date):
     holdings_after, closed, _ = update_holdings(h_copy, df, signal_date, [], trade_dates_list)
     today_added = [h for h in holdings_after if pd.Timestamp(h["entry_date"]) == pd.Timestamp(signal_date)]
     body = format_message(sig_str, signals, holdings_after, closed, today_added,
-                          len(signals) >= N_PICK_MIN, kosdaq_hot_on(df, signal_date))
+                          len(signals) >= N_PICK_MIN, kosdaq_hot_on(df, signal_date), df=df)
     lines = [f"🔧 [수동 점검] {REPO_LABEL} 코드 {OPS_VERSION}",
              f"신호일 {sig_str} 이미 처리됨 → 현재 코드로 재계산 (레포 저장 없음)",
              f"데이터 마지막일 {pd.Timestamp(df['date'].max()).strftime('%Y-%m-%d')}"]
@@ -790,10 +936,12 @@ def run_manual_check(df, signal_date):
     alerts = compute_drop_alerts(df, signal_date, ALL_SIGNALS_LOG_DIR, {})
     if alerts:
         lines.append(f"[처분 준비 대상 미리보기] {len(alerts)}개")
+        trade_dates, idx = _date_index(df)
         for a in alerts:
             mark = " (알림 발송됨)" if a["key"] in sent else " (미발송)"
-            lines.append(f"- [{a['ticker']}] {a['name']}{mark}")
-            lines.append(f"  진입 {a['entry_date']} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} ({a['ret']*100:+.2f}%)")
+            xd, n = exit_schedule(trade_dates, idx, a.get("signal_date"), signal_date, a.get("exit_planned"))
+            lines.append(f"- [{a['ticker']}] {a['name']} {a['ret']*100:+.2f}%{mark}")
+            lines.append(f"  매수 {_md(a['entry_date'])} {a.get('entry_basis', '종가')} {a['entry_price']:,.0f} → 종가 {a['close']:,.0f} · {exit_label(xd, n)}")
     else:
         lines.append("[처분 준비 대상 미리보기] 없음")
     msg = "\n".join(lines)
@@ -1154,7 +1302,7 @@ def main():
         print(f"all_signals_log update: {updated_count}개 파일")
 
     print("\n[5] Telegram...")
-    msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid, kosdaq_hot_on(df, signal_date))
+    msg = format_message(signal_date_str, signals, holdings_after, closed, new_added, n_pick_valid, kosdaq_hot_on(df, signal_date), df=df)
     send_telegram(msg)
     save_last_notified_date(signal_date)
     print(msg)
