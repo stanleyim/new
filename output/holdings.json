@@ -5,11 +5,13 @@
     "name": "HMM",
     "signal_score": 6.28,
     "n_signals": 4,
-    "entry_price": null,
-    "exit_date_planned": "2026-10-14",
+    "entry_price": 23250.0,
+    "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": null,
-    "current_ret": null,
-    "days_held": 0
+    "current_price": 23250.0,
+    "current_ret": 0.0,
+    "days_held": 1,
+    "entry_t1_date": "2026-10-15",
+    "bdays_remaining": 9
   }
 ]

@@ -17,13 +17,14 @@
       "SIG7": 0,
       "cap_class": "대형",
       "signal_close": 23300.0,
-      "virtual_entry_date": null,
-      "virtual_entry_price": null,
+      "virtual_entry_date": "2026-10-15",
+      "virtual_entry_price": 23250.0,
       "virtual_exit_date_planned": null,
       "virtual_exit_price": null,
       "gross_ret": null,
       "net_ret": null,
-      "status": "pending"
+      "status": "pending",
+      "entry_basis": "T+1_close"
     }
   ]
 }
