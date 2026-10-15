@@ -41,7 +41,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.3.1"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.3.2"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -621,6 +621,19 @@ def fill_limit_price(p0):
         x += 1
     return x
 
+def krx_tick(p):
+    """KRX 주식 호가가격단위 (2023-01-25 개편, 코스피·코스닥 동일)."""
+    return (1 if p < 2000 else 5 if p < 5000 else 10 if p < 20000 else 50 if p < 50000
+            else 100 if p < 200000 else 500 if p < 500000 else 1000)
+
+def order_limit_price(limit_px):
+    """미체결 기준가 바로 아래의 주문 가능한 최고 가격 (2026-10-16 ops v8.3.2, 표시 전용).
+    이 지정가로 15:20~15:30 동시호가 매수 주문 → 종가가 기준가 미만이면 그 종가로 체결, 기준가 이상이면 미체결 (규칙과 동일)."""
+    x = int(limit_px) - 1
+    while x > 0 and x % krx_tick(x) != 0:
+        x -= 1
+    return x
+
 def _md(d):
     return pd.Timestamp(d).strftime("%m-%d")
 
@@ -787,7 +800,9 @@ def format_message(target_date, signals, holdings_after, closed, new_added, n_pi
             lines.append(f"- [{h['ticker']}] {h['name']}: T+1{t1_str} 종가 매수")
             p0 = sig_close.get(h["ticker"])
             if p0 is not None and float(p0) > 0:
-                lines.append(f"  신호일 종가 {float(p0):,.0f} · {fill_limit_price(p0):,} 이상이면 미체결")
+                lim = fill_limit_price(p0)
+                lines.append(f"  신호일 종가 {float(p0):,.0f} · {lim:,} 이상이면 미체결")
+                lines.append(f"  주문: 15:20~15:30 동시호가 지정가 {order_limit_price(lim):,}")
             else:
                 lines.append(f"  신호일 종가 대비 +{(FILL_LIMIT - 1) * 100:.0f}% 이상이면 미체결")
         lines.append("")
