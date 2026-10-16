@@ -9,6 +9,7 @@ import json
 import sys
 import time
 import traceback
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -41,7 +42,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.4"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.5"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -68,6 +69,81 @@ def send_telegram(text):
     r = requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=30)
     if r.status_code != 200:
         print(f"[WARN] Telegram 실패: {r.status_code} {r.text}")
+
+# ===== LINE 그룹 전송 (2026-10-16 ops v8.5, 표시·알림 전용) =====
+#   대상 = 정규 실행 결과 + 처분 준비 알림만 (수동 점검·소급·휴장·에러 메시지는 텔레그램만).
+#   LINE 실패는 실행·저장·텔레그램에 영향 없음(예외를 밖으로 내지 않음). 실패하면 텔레그램에 경고 1줄.
+LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
+LINE_TEXT_MAX = 4800  # LINE 텍스트 메시지 한 개 5,000자 제한보다 작게
+
+def _line_chunks(text, limit=LINE_TEXT_MAX):
+    """줄 단위로 limit자 이하 조각으로 나눈다(보통 1조각)."""
+    if len(text) <= limit:
+        return [text]
+    out, cur = [], ""
+    for ln in text.split("\n"):
+        while len(ln) > limit:  # 한 줄이 limit보다 길면 강제 분할
+            if cur:
+                out.append(cur); cur = ""
+            out.append(ln[:limit]); ln = ln[limit:]
+        if cur and len(cur) + 1 + len(ln) > limit:
+            out.append(cur); cur = ln
+        else:
+            cur = ln if not cur else cur + "\n" + ln
+    if cur:
+        out.append(cur)
+    return out
+
+def line_configured():
+    return bool(os.environ.get("LINE_CHANNEL_TOKEN")) and bool(os.environ.get("LINE_GROUP_ID"))
+
+def send_line_group(text):
+    """LINE 그룹으로 텍스트 전송. 성공 True / 실패 False / 미설정 None. 예외는 밖으로 내지 않는다.
+    메시지 1개(5,000자 이하)면 요청 1회. 네트워크 오류·5xx는 같은 retry-key로 1회 재시도(중복 전송 방지)."""
+    token = os.environ.get("LINE_CHANNEL_TOKEN")
+    gid = os.environ.get("LINE_GROUP_ID")
+    if not token or not gid:
+        print("[INFO] LINE 환경변수 없음, LINE 전송 스킵")
+        return None
+    chunks = _line_chunks(text)
+    if len(chunks) > 5:
+        chunks = chunks[:4] + ["(이하 생략)"]
+    ok_all = True
+    for i in range(0, len(chunks), 5):
+        part = chunks[i:i + 5]
+        body = {"to": gid, "messages": [{"type": "text", "text": c} for c in part]}
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                   "X-Line-Retry-Key": str(uuid.uuid4())}
+        done = False
+        for attempt in (1, 2):
+            try:
+                r = requests.post(LINE_PUSH_URL, headers=headers, data=json.dumps(body, ensure_ascii=False).encode("utf-8"), timeout=30)
+            except Exception as e:
+                print(f"[WARN] LINE 요청 오류({attempt}/2): {type(e).__name__}: {str(e)[:150]}")
+                continue
+            if r.status_code == 200:
+                print(f"LINE 전송 완료 ({len(part)}개)")
+                done = True
+                break
+            print(f"[WARN] LINE 실패({attempt}/2): {r.status_code} {r.text[:200]}")
+            if r.status_code < 500:  # 4xx(잘못된 그룹ID·월 한도 초과 등)는 재시도 무의미
+                break
+        ok_all = ok_all and done
+    return ok_all
+
+def notify_line(text, label):
+    """정규 결과·처분 준비용. 실패하면 텔레그램에 경고 1줄. 절대 예외를 내지 않는다."""
+    try:
+        ok = send_line_group(text)
+    except Exception as e:  # 방어: 어떤 경우에도 본 실행을 막지 않음
+        print(f"[WARN] LINE 처리 중 예외: {type(e).__name__}: {str(e)[:150]}")
+        ok = False
+    if ok is False:
+        try:
+            send_telegram(f"⚠️ LINE 전송 실패 ({label}) — 텔레그램은 정상입니다. Actions 로그 확인 (그룹ID·토큰·월 한도)")
+        except Exception as e:
+            print(f"[WARN] LINE 실패 경고 텔레그램도 실패: {type(e).__name__}")
+    return ok
 
 # ===== KIS 토큰 =====
 def get_kis_token():
@@ -987,6 +1063,7 @@ def run_drop_alerts(df, signal_date):
             sent[a["key"]] = {"alert_date": sig_str, "close": a["close"], "ret": round(a["ret"], 6)}
         OUT.mkdir(parents=True, exist_ok=True)
         DROP_ALERT_PATH.write_text(json.dumps(sent, indent=2, ensure_ascii=False), encoding="utf-8")
+        notify_line(msg, "처분 준비")  # 2026-10-16 (ops v8.5): 텔레그램 발송·상태 저장 성공 후에만 LINE (중복 방지)
 
 def run_manual_check(df, signal_date):
     """2026-10-15 (ops v8.2) 수동 점검 모드.
@@ -1048,6 +1125,15 @@ def run_manual_check(df, signal_date):
         lines.append("[처분 준비 대상 미리보기] 없음")
     # 2026-10-16 (ops v8.4): 포워드 v8 집계 3줄 (정규 실행과 같은 계산, 저장 없음)
     lines += [""] + forward_v8_safe(df, signal_date, holdings_after + load_results() + closed)
+    # 2026-10-16 (ops v8.5): LINE 설정 상태 표시. 워크플로 입력 line_test=true일 때만 그룹에 테스트 1건 전송
+    gid_len = len(os.environ.get("LINE_GROUP_ID") or "")
+    if not line_configured():
+        lines += ["", "LINE: 미설정 (LINE_CHANNEL_TOKEN·LINE_GROUP_ID 확인)"]
+    elif os.environ.get("LINE_TEST") == "true":
+        ok = send_line_group("✅ New Signals 연결 테스트\n이 방으로 평일 저녁 8시에 결과가 전송됩니다.")
+        lines += ["", "LINE: 테스트 전송 " + ("성공 — 그룹방 확인" if ok else "실패 — Actions 로그 확인")]
+    else:
+        lines += ["", f"LINE: 설정됨 (그룹ID {gid_len}자) · 테스트 전송은 Run workflow의 line_test 체크"]
     msg = "\n".join(lines)
     print(msg)
     send_telegram(msg)
@@ -1412,6 +1498,7 @@ def main():
     send_telegram(msg)
     save_last_notified_date(signal_date)
     print(msg)
+    notify_line(msg, "정규 결과")  # 2026-10-16 (ops v8.5): 텔레그램과 같은 내용을 LINE 그룹에도 (실패해도 실행 계속)
     try:
         run_drop_alerts(df, signal_date)
     except Exception as e:
