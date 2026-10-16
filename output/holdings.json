@@ -8,10 +8,23 @@
     "entry_price": 23250.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 23250.0,
-    "current_ret": 0.0,
-    "days_held": 1,
+    "current_price": 23600.0,
+    "current_ret": 0.01505376344086029,
+    "days_held": 2,
     "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 9
+    "bdays_remaining": 8
+  },
+  {
+    "entry_date": "2026-10-16",
+    "ticker": "009470",
+    "name": "삼화전기",
+    "signal_score": 4.359999999999999,
+    "n_signals": 3,
+    "entry_price": null,
+    "exit_date_planned": null,
+    "weight": 0.25,
+    "current_price": null,
+    "current_ret": null,
+    "days_held": 0
   }
 ]
