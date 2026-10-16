@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 11 * * 1-5'  # 11:17 UTC (20:17 KST)
   workflow_dispatch:
+    inputs:
+      line_test:
+        description: 'LINE 그룹에 연결 테스트 메시지 1건 보내기'
+        type: boolean
+        default: false
 
 jobs:
   run-signal:
@@ -25,6 +30,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           KRX_ID: ${{ secrets.KRX_ID }}
           KRX_PW: ${{ secrets.KRX_PW }}
+          LINE_CHANNEL_TOKEN: ${{ secrets.LINE_CHANNEL_TOKEN }}
+          LINE_GROUP_ID: ${{ secrets.LINE_GROUP_ID }}
+          LINE_TEST: ${{ github.event.inputs.line_test }}
         run: python signal_runner.py
       - name: Commit results
         run: |
