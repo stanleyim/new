@@ -42,7 +42,7 @@ DROP_ALERT_TH = -0.05  # 종가가 가상 진입가(T+1 종가) 대비 -5% 이�
 # 2026-10-14 (ops v8.1): 가상 진입가 기준 경계. virtual_entry_date(T+1)가 이 날 이후인 기록 = T+1 종가 진입,
 #   이전 기록 = T+1 시가 진입(구규칙, 값 그대로 유지). 상세: OPS_CHANGELOG.md
 CLOSE_ENTRY_FROM = "2026-10-14"
-OPS_VERSION = "v8.5"  # 운용 코드 버전 (OPS_CHANGELOG.md)
+OPS_VERSION = "v8.6"  # 운용 코드 버전 (OPS_CHANGELOG.md)
 # 2026-10-15 (ops v8.2): 수동 실행(Run workflow) 여부. GitHub Actions가 자동으로 넣어주는 값
 IS_MANUAL_RUN = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
 # 2026-10-14 C단계 통과 규칙(설계 2018~22·근접 2023~24·E1 2025~26-06 통과, sig_grid_cell.py·sig_c_cell.py):
@@ -407,6 +407,166 @@ def one_time_cleanup_20261013():
     OUT.mkdir(parents=True, exist_ok=True)
     STALE_MARKER.write_text("done", encoding="utf-8")
 
+# ===== 2026-10-18 (ops v8.6) 일봉 = KRX 공식값 (pykrx) =====
+# 감사(10-18): KIS 일봉 종가가 06-29 이후 27% 행에서 KRX 공식 종가와 달랐음(p5 −2.0%·p95 +1.5%),
+#   KIS 등락률로 역산한 전일 종가는 99.97% KRX와 일치 → 저장 종가가 문제. 백테스트 데이터(~06-26)는 KRX 기준.
+KRX_PX_COLS = ["시가", "고가", "저가", "종가", "거래량", "등락률"]
+KRX_FIX_FROM = pd.Timestamp("2026-06-29")
+KRX_FIX_REPORT = OUT / "krx_fix_20261018.json"   # 1회 교정 보고서 = 완료 표시
+KRX_FIX_ARTIFACTS = {("2026-09-08", "108490"), ("2026-09-18", "456010"), ("2026-09-18", "042370")}  # KRX 가격이면 미발생 신호(감사 F_signal_compare)
+
+def krx_ohlcv_day(d, tickers):
+    """KRX 공식 일봉 1일치(pykrx, 시장 전체 1회 호출) 중 tickers만. 휴장·미공표면 빈 DataFrame, 조회 오류는 예외."""
+    from pykrx import stock
+    ds = pd.Timestamp(d).strftime("%Y%m%d")
+    x, last = None, None
+    for k in range(3):
+        try:
+            x = stock.get_market_ohlcv(ds, market="ALL")
+            break
+        except Exception as e:
+            last = e
+            time.sleep(2 + 2 * k)
+    else:
+        raise RuntimeError(f"KRX 일봉 조회 실패 {ds}: {type(last).__name__}: {str(last)[:150]}")
+    empty = pd.DataFrame(columns=["date", "ticker"] + KRX_PX_COLS)
+    if x is None or len(x) == 0:
+        return empty
+    x = x.reset_index()
+    x = x.rename(columns={x.columns[0]: "ticker"})
+    x["ticker"] = x["ticker"].astype(str)
+    x = x[x["ticker"].isin(set(map(str, tickers)))].copy()
+    for c in KRX_PX_COLS:
+        x[c] = pd.to_numeric(x[c], errors="coerce").astype(float)
+    if len(x) == 0 or not (x["종가"] > 0).any():
+        return empty
+    x["date"] = pd.Timestamp(ds)
+    return x[["date", "ticker"] + KRX_PX_COLS].reset_index(drop=True)
+
+def _same_day_repeat(x, ref):
+    """KRX가 새 날짜 대신 직전 거래일 값을 돌려준 경우 탐지: 종가·거래량이 ref와 95% 이상 동일."""
+    if ref is None or len(ref) == 0 or len(x) == 0:
+        return False
+    j = x.merge(ref, on="ticker", suffixes=("", "_r"))
+    if len(j) == 0:
+        return False
+    same = ((j["종가"] - j["종가_r"]).abs() < 0.5) & ((j["거래량"] - j["거래량_r"]).abs() < 0.5)
+    return same.mean() >= 0.95
+
+def krx_fix_20261018(ohlcv, universe, dry_run=False):
+    """1회성(ops v8.6): ohlcv_full 06-29 이후 행을 KRX 공식값으로 교체하고, all_signals_log·holdings·results의
+    06-29 이후 가격 기록을 KRX 값으로 정정(원래 값은 orig_* 필드로 보존, 삭제 없음). 보고서 파일이 있으면 아무것도 안 함.
+    한 행이라도 KRX 값이 없으면 중단(예외, 저장 없음). dry_run=True면 계산만 하고 저장하지 않음(수동 점검 미리보기)."""
+    if KRX_FIX_REPORT.exists():
+        return ohlcv, None
+    o = ohlcv.copy()
+    o["date"] = pd.to_datetime(o["date"])
+    o["ticker"] = o["ticker"].astype(str)
+    m = o["date"] >= KRX_FIX_FROM
+    tickers = universe["ticker"].astype(str).tolist()
+    parts = []
+    for d in sorted(o.loc[m, "date"].unique()):
+        x = krx_ohlcv_day(d, tickers)
+        if len(x) == 0:
+            raise RuntimeError(f"KRX 교정 중단: {pd.Timestamp(d).date()} KRX 일봉 없음 (저장 없음)")
+        parts.append(x)
+    k = pd.concat(parts, ignore_index=True).drop_duplicates(["date", "ticker"]).set_index(["date", "ticker"])
+    key = pd.MultiIndex.from_frame(o.loc[m, ["date", "ticker"]])
+    n_miss = int((~key.isin(k.index)).sum())
+    if n_miss:
+        raise RuntimeError(f"KRX 교정 중단: KRX 값 없는 행 {n_miss}개 (저장 없음)")
+    kv = k.reindex(key)
+    changed = {}
+    for c in KRX_PX_COLS:
+        old = o.loc[m, c].astype(float).values
+        new = kv[c].astype(float).values
+        tol = 1e-6 if c == "등락률" else 0.5
+        changed[c] = int((~(np.abs(old - new) <= tol)).sum())
+        o[c] = o[c].astype(float)
+        o.loc[m, c] = new
+    px = o.set_index(["ticker", "date"])
+
+    def kp(t, d, c):
+        try:
+            v = float(px.at[(str(t), pd.Timestamp(str(d)[:10])), c])
+        except Exception:
+            return None
+        return v if v > 0 else None
+
+    def setf(r, f, new, log, tag):
+        old = r.get(f)
+        if old is None or new is None:
+            return
+        tol = 1e-12 if f.endswith("_ret") else 0.5
+        if abs(float(old) - float(new)) > tol:
+            if f"orig_{f}" not in r:
+                r[f"orig_{f}"] = old
+            r[f] = float(new)
+            log.append({"where": tag, "field": f, "orig": r[f"orig_{f}"], "new": float(new)})
+
+    rec_log, fill_mis, artifacts, files = [], [], [], {}
+    for lf in sorted(ALL_SIGNALS_LOG_DIR.glob("*.json")):
+        data = json.loads(lf.read_text())
+        touched = False
+        for r in data.get("records", []):
+            sd = str(r.get("signal_date"))[:10]
+            if pd.Timestamp(sd) < KRX_FIX_FROM:
+                continue
+            t = str(r.get("ticker"))
+            tag = f"{sd} {t}"
+            close_basis = r.get("entry_basis") == "T+1_close"
+            setf(r, "signal_close", kp(t, sd, "종가"), rec_log, tag)
+            if r.get("virtual_entry_date"):
+                setf(r, "virtual_entry_price", kp(t, r["virtual_entry_date"], "종가" if close_basis else "시가"), rec_log, tag)
+            if r.get("virtual_exit_date_planned"):
+                setf(r, "virtual_exit_price", kp(t, r["virtual_exit_date_planned"], "종가"), rec_log, tag)
+            ep, xp = r.get("virtual_entry_price"), r.get("virtual_exit_price")
+            if ep and xp and r.get("gross_ret") is not None:
+                g = float(xp) / float(ep) - 1.0
+                setf(r, "gross_ret", g, rec_log, tag)
+                setf(r, "net_ret", g - TOTAL_COST, rec_log, tag)
+            if close_basis and r.get("virtual_entry_date"):
+                sc, c1 = kp(t, sd, "종가"), kp(t, r["virtual_entry_date"], "종가")
+                if sc and c1 and ((c1 / sc >= FILL_LIMIT) != (r.get("status") == "unfilled")):
+                    fill_mis.append(tag)   # 미체결 판정이 KRX 기준과 다름 — status는 바꾸지 않고 보고만
+            r["price_source"] = "KRX (2026-10-18 정정, ops v8.6)"
+            if (sd, t) in KRX_FIX_ARTIFACTS:
+                r["data_artifact"] = "KIS 가격 오류로 발생한 신호 (KRX 가격이면 미발생, 2026-10-18 감사)"
+                artifacts.append(tag)
+            touched = True
+        if touched:
+            files[lf] = data
+
+    def fix_positions(items, tag):
+        for h in items:
+            t1 = h.get("entry_t1_date")
+            if h.get("entry_price") and t1 and pd.Timestamp(t1) >= KRX_FIX_FROM:
+                setf(h, "entry_price", kp(h["ticker"], t1, "종가"), rec_log, f"{tag} {h['ticker']}")
+    holdings, results = load_holdings(), load_results()
+    fix_positions(holdings, "holdings")
+    fix_positions(results, "results")
+
+    report = {"ops": "v8.6", "run_at": pd.Timestamp.now(tz="Asia/Seoul").strftime("%Y-%m-%d %H:%M"),
+              "from": str(KRX_FIX_FROM.date()), "ohlcv_rows": int(m.sum()),
+              "ohlcv_days": int(o.loc[m, "date"].nunique()), "ohlcv_changed": changed,
+              "record_changes": rec_log, "data_artifact": artifacts, "fill_mismatch": fill_mis}
+    if dry_run:
+        return ohlcv, report
+    o.to_parquet(OHLCV_PATH, index=False)
+    for lf, data in files.items():
+        lf.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+    save_holdings(holdings)
+    if RESULTS_PATH.exists():
+        save_results(results)
+    KRX_FIX_REPORT.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    return o, report
+
+def krx_fix_summary(rep):
+    n_rec = len({c["where"] for c in rep["record_changes"] if not c["where"].startswith(("holdings", "results"))})
+    n_pos = len({c["where"] for c in rep["record_changes"] if c["where"].startswith(("holdings", "results"))})
+    return (f"일봉 {rep['ohlcv_days']}일·{rep['ohlcv_rows']:,}행 (종가 변경 {rep['ohlcv_changed']['종가']:,}) · "
+            f"기록 {n_rec}건 · 보유 {n_pos}건 · 데이터 오류 표시 {len(rep['data_artifact'])}건 · 미체결 판정 차이 {len(rep['fill_mismatch'])}")
+
 def fetch_and_append():
     universe = pd.read_parquet(UNIVERSE_PATH)
     ohlcv_old = pd.read_parquet(OHLCV_PATH)
@@ -445,12 +605,29 @@ def fetch_and_append():
     target_dates = pd.date_range(start_date, end_date, freq="D")
     target_date_set = set(target_dates.normalize())
 
+    # 2026-10-18 (ops v8.6): 일봉 = KRX 공식값(pykrx, 날짜당 1회). KIS 일봉(get_ohlcv)은 쓰지 않음.
+    #   조회 오류 = 예외(저장·커밋 없음, 재실행). 휴장·미공표(빈 결과·직전일 반복) = 그날 건너뜀(다음 실행에서 다시 수집).
+    import holidays
+    kr_h = holidays.SouthKorea()
+    ref = krx_ohlcv_day(ohlcv_old["date"].max(), tickers)[["ticker", "종가", "거래량"]]   # 직전 저장일의 KRX 값 (반복 탐지 기준)
+    for d in target_dates:
+        if _krx_closed(d, kr_h):
+            continue
+        x = krx_ohlcv_day(d, tickers)
+        if len(x) == 0:
+            print(f"[WARN] KRX 일봉 {d.date()} 없음(휴장·미공표) — 건너뜀")
+            continue
+        if _same_day_repeat(x, ref):
+            print(f"[WARN] KRX 일봉 {d.date()} 직전 거래일과 동일(미공표 추정) — 건너뜀")
+            continue
+        n_miss = len(set(map(str, tickers)) - set(x["ticker"]))
+        if n_miss > 0.05 * len(tickers):
+            raise RuntimeError(f"KRX 일봉 {d.date()} 종목 누락 {n_miss}/{len(tickers)}")
+        new_ohlcv.extend(x.to_dict("records"))
+        ref = x[["ticker", "종가", "거래량"]]
+    print(f"  KRX 일봉: {len({r['date'] for r in new_ohlcv})}일 · {len(new_ohlcv)}행")
+
     for i, tkr in enumerate(tickers):
-        # OHLCV
-        rows = kis.get_ohlcv(tkr, start_date, end_date)
-        for r in rows:
-            if r["date"].normalize() in target_date_set:
-                new_ohlcv.append(r)
         # Flow (외인/기관)
         rows = kis.get_investor(tkr)
         for r in rows:
@@ -1134,6 +1311,16 @@ def run_manual_check(df, signal_date):
         lines += ["", "LINE: 테스트 전송 " + ("성공 — 그룹방 확인" if ok else "실패 — Actions 로그 확인")]
     else:
         lines += ["", f"LINE: 설정됨 (그룹ID {gid_len}자) · 테스트 전송은 Run workflow의 line_test 체크"]
+    # 2026-10-18 (ops v8.6): KRX 1회 교정 상태 (수동 점검은 저장 없음 — 미리보기만)
+    if KRX_FIX_REPORT.exists():
+        lines += ["", f"KRX 교정: 완료 (output/{KRX_FIX_REPORT.name})"]
+    else:
+        try:
+            o_now = pd.read_parquet(OHLCV_PATH)
+            _, prev = krx_fix_20261018(o_now, pd.read_parquet(UNIVERSE_PATH), dry_run=True)
+            lines += ["", "KRX 교정 미리보기 (다음 정규 실행 때 1회 적용)", krx_fix_summary(prev)]
+        except Exception as e:
+            lines += ["", f"KRX 교정 미리보기 실패: {type(e).__name__}: {str(e)[:150]}"]
     msg = "\n".join(lines)
     print(msg)
     send_telegram(msg)
@@ -1160,6 +1347,14 @@ def main():
 
     print("\n[1] KIS 데이터 fetch...")
     ohlcv, flow, short, universe = fetch_and_append()
+
+    # 2026-10-18 (ops v8.6): 06-29 이후 일봉·가격 기록 KRX 1회 교정 — 수동 실행에서는 하지 않음(점검 화면에 미리보기만)
+    if not IS_MANUAL_RUN and not KRX_FIX_REPORT.exists():
+        print("\n[1-1] KRX 1회 교정...")
+        ohlcv, _rep = krx_fix_20261018(ohlcv, universe)
+        _s = "🔧 [KRX 교정 완료] " + REPO_LABEL + " 코드 " + OPS_VERSION + "\n" + krx_fix_summary(_rep) + "\n보고서: output/" + KRX_FIX_REPORT.name
+        print(_s)
+        send_telegram(_s)
 
     print("\n[2] Feature 계산...")
     df = compute_features(ohlcv, flow, short)
