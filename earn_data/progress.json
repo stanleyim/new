@@ -1,13 +1,13 @@
 {
   "total": 16766,
-  "stored": 6128,
+  "stored": 12204,
   "failed_permanent": 0,
   "failed_temporary": 0,
   "completed": false,
   "limit_hit": false,
   "halted": false,
   "last_stop_reason": "시간예산 소진",
-  "updated_at": "2026-10-19T20:56:49Z",
+  "updated_at": "2026-10-19T22:57:19Z",
   "by_year_total_stored": {
     "2018": [
       1776,
@@ -23,19 +23,19 @@
     ],
     "2021": [
       1861,
-      779
+      1861
     ],
     "2022": [
       1930,
-      0
+      1930
     ],
     "2023": [
       1939,
-      0
+      1939
     ],
     "2024": [
       1965,
-      0
+      1125
     ],
     "2025": [
       2040,
