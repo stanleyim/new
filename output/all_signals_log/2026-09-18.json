@@ -16,14 +16,20 @@
       "SIG6": 1,
       "SIG7": 1,
       "cap_class": "소형",
-      "signal_close": 11630.0,
+      "signal_close": 11440.0,
       "virtual_entry_date": "2026-09-21",
       "virtual_entry_price": 11750.0,
       "virtual_exit_date_planned": "2026-10-07",
-      "virtual_exit_price": 10830.0,
-      "gross_ret": -0.07829787234042551,
-      "net_ret": -0.08035787234042552,
-      "status": "closed"
+      "virtual_exit_price": 10720.0,
+      "gross_ret": -0.08765957446808514,
+      "net_ret": -0.08971957446808515,
+      "status": "closed",
+      "orig_signal_close": 11630.0,
+      "orig_virtual_exit_price": 10830.0,
+      "orig_gross_ret": -0.07829787234042551,
+      "orig_net_ret": -0.08035787234042552,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)",
+      "data_artifact": "KIS 가격 오류로 발생한 신호 (KRX 가격이면 미발생, 2026-10-18 감사)"
     },
     {
       "signal_date": "2026-09-18",
@@ -39,14 +45,20 @@
       "SIG6": 1,
       "SIG7": 1,
       "cap_class": "소형",
-      "signal_close": 22350.0,
+      "signal_close": 22700.0,
       "virtual_entry_date": "2026-09-21",
       "virtual_entry_price": 22700.0,
       "virtual_exit_date_planned": "2026-10-07",
-      "virtual_exit_price": 24850.0,
-      "gross_ret": 0.09471365638766516,
-      "net_ret": 0.09265365638766515,
-      "status": "closed"
+      "virtual_exit_price": 24950.0,
+      "gross_ret": 0.09911894273127753,
+      "net_ret": 0.09705894273127752,
+      "status": "closed",
+      "orig_signal_close": 22350.0,
+      "orig_virtual_exit_price": 24850.0,
+      "orig_gross_ret": 0.09471365638766516,
+      "orig_net_ret": 0.09265365638766515,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)",
+      "data_artifact": "KIS 가격 오류로 발생한 신호 (KRX 가격이면 미발생, 2026-10-18 감사)"
     }
   ]
 }

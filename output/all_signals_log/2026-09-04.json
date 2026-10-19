@@ -20,10 +20,14 @@
       "virtual_entry_date": "2026-09-07",
       "virtual_entry_price": 23100.0,
       "virtual_exit_date_planned": "2026-10-08",
-      "virtual_exit_price": 28650.0,
-      "gross_ret": 0.24025974025974017,
-      "net_ret": 0.23819974025974017,
-      "status": "closed"
+      "virtual_exit_price": 28400.0,
+      "gross_ret": 0.22943722943722933,
+      "net_ret": 0.22737722943722932,
+      "status": "closed",
+      "orig_virtual_exit_price": 28650.0,
+      "orig_gross_ret": 0.24025974025974017,
+      "orig_net_ret": 0.23819974025974017,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)"
     },
     {
       "signal_date": "2026-09-04",
@@ -43,10 +47,14 @@
       "virtual_entry_date": "2026-09-07",
       "virtual_entry_price": 11030.0,
       "virtual_exit_date_planned": "2026-10-08",
-      "virtual_exit_price": 12490.0,
-      "gross_ret": 0.13236627379873078,
-      "net_ret": 0.13030627379873078,
-      "status": "closed"
+      "virtual_exit_price": 12200.0,
+      "gross_ret": 0.10607434270172256,
+      "net_ret": 0.10401434270172255,
+      "status": "closed",
+      "orig_virtual_exit_price": 12490.0,
+      "orig_gross_ret": 0.13236627379873078,
+      "orig_net_ret": 0.13030627379873078,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)"
     }
   ]
 }

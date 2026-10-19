@@ -16,14 +16,19 @@
       "SIG6": 1,
       "SIG7": 1,
       "cap_class": "중형",
-      "signal_close": 8650.0,
+      "signal_close": 8600.0,
       "virtual_entry_date": "2026-09-16",
       "virtual_entry_price": 8470.0,
       "virtual_exit_date_planned": "2026-10-01",
-      "virtual_exit_price": 11120.0,
-      "gross_ret": 0.31286894923258557,
-      "net_ret": 0.31080894923258556,
-      "status": "closed"
+      "virtual_exit_price": 11000.0,
+      "gross_ret": 0.2987012987012987,
+      "net_ret": 0.2966412987012987,
+      "status": "closed",
+      "orig_signal_close": 8650.0,
+      "orig_virtual_exit_price": 11120.0,
+      "orig_gross_ret": 0.31286894923258557,
+      "orig_net_ret": 0.31080894923258556,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)"
     },
     {
       "signal_date": "2026-09-15",
@@ -39,14 +44,16 @@
       "SIG6": 1,
       "SIG7": 1,
       "cap_class": "소형",
-      "signal_close": 10720.0,
+      "signal_close": 10660.0,
       "virtual_entry_date": "2026-09-16",
       "virtual_entry_price": 10500.0,
       "virtual_exit_date_planned": "2026-10-01",
       "virtual_exit_price": 9570.0,
       "gross_ret": -0.08857142857142852,
       "net_ret": -0.09063142857142853,
-      "status": "closed"
+      "status": "closed",
+      "orig_signal_close": 10720.0,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)"
     }
   ]
 }

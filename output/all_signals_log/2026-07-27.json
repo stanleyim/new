@@ -23,7 +23,8 @@
       "virtual_exit_price": 51600.0,
       "gross_ret": 0.4433566433566434,
       "net_ret": 0.44129664335664337,
-      "status": "closed"
+      "status": "closed",
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)"
     }
   ]
 }

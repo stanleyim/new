@@ -20,10 +20,15 @@
       "virtual_entry_date": "2026-09-09",
       "virtual_entry_price": 283500.0,
       "virtual_exit_date_planned": "2026-09-22",
-      "virtual_exit_price": 302500.0,
-      "gross_ret": 0.0670194003527338,
-      "net_ret": 0.06495940035273379,
-      "status": "closed"
+      "virtual_exit_price": 300000.0,
+      "gross_ret": 0.05820105820105814,
+      "net_ret": 0.05614105820105814,
+      "status": "closed",
+      "orig_virtual_exit_price": 302500.0,
+      "orig_gross_ret": 0.0670194003527338,
+      "orig_net_ret": 0.06495940035273379,
+      "price_source": "KRX (2026-10-18 정정, ops v8.6)",
+      "data_artifact": "KIS 가격 오류로 발생한 신호 (KRX 가격이면 미발생, 2026-10-18 감사)"
     }
   ]
 }
