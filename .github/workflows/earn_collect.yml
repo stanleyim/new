@@ -1,0 +1,92 @@
+name: DART Earnings Body Collect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # 자기 자신을 재트리거하려면 필요
+
+concurrency:
+  group: earn-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch target list (dart-data) and existing results (dart-earn)
+        run: |
+          git fetch origin dart-data
+          mkdir -p existing_dart_list
+          git archive origin/dart-data -- dart_data | tar -x -C existing_dart_list
+          mv existing_dart_list/dart_data existing_dart_list/dart_data_tmp && mkdir -p existing_dart_list && mv existing_dart_list/dart_data_tmp existing_dart_list/dart_data
+          ls existing_dart_list/dart_data | head -20
+          mkdir -p existing_earn
+          if git fetch origin dart-earn 2>/dev/null && git rev-parse --verify origin/dart-earn > /dev/null 2>&1; then
+            git archive origin/dart-earn -- earn_data | tar -x -C existing_earn
+            echo "기존 dart-earn 데이터 불러옴"
+          else
+            echo "dart-earn 브랜치 없음 — 처음부터 시작"
+          fi
+
+      - name: Run collector (최대 110분, 시간예산 소진 시 자동 중단)
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          TIME_BUDGET_MINUTES: "110"
+        run: python -u earn_collect.py
+
+      - name: Move output out of the way
+        if: ${{ always() }}
+        run: |
+          if [ -d earn_data ]; then mv earn_data /tmp/earn_data; else echo "earn_data 없음"; fi
+
+      - name: Commit to dart-earn branch
+        if: ${{ always() }}
+        run: |
+          if [ ! -d /tmp/earn_data ]; then echo "저장할 결과 없음"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+          if git ls-remote --exit-code --heads origin dart-earn > /dev/null 2>&1; then
+            git fetch origin dart-earn
+            git checkout -B dart-earn origin/dart-earn
+          else
+            git checkout --orphan dart-earn
+            git rm -rf . > /dev/null 2>&1 || true
+          fi
+          rm -rf earn_data
+          cp -r /tmp/earn_data earn_data
+          git add earn_data
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음 — 커밋 생략"
+          else
+            git commit -m "DART earnings body $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin dart-earn
+          fi
+
+      - name: Trigger next run if not complete (10분 후)
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          next=$(python3 -c "import json;p=json.load(open('/tmp/earn_data/progress.json'));print('yes' if (not p.get('completed') and not p.get('limit_hit') and not p.get('halted')) else 'no')" 2>/dev/null || echo "no")
+          echo "next=$next"
+          if [ "$next" = "yes" ]; then
+            echo "10분 대기 후 다음 실행 트리거"
+            sleep 600
+            gh workflow run earn_collect.yml --ref main
+          else
+            echo "추가 트리거 없음 (완료·일 한도·정지 또는 progress 없음) — progress.json 확인"
+          fi
