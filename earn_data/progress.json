@@ -1,13 +1,13 @@
 {
   "total": 16766,
-  "stored": 16749,
+  "stored": 16766,
   "failed_permanent": 0,
   "failed_temporary": 0,
-  "completed": false,
+  "completed": true,
   "limit_hit": false,
   "halted": false,
-  "last_stop_reason": "시간예산 소진",
-  "updated_at": "2026-10-20T00:57:46Z",
+  "last_stop_reason": "모든 대상 처리",
+  "updated_at": "2026-10-20T01:08:41Z",
   "by_year_total_stored": {
     "2018": [
       1776,
@@ -43,7 +43,7 @@
     ],
     "2026": [
       1682,
-      1665
+      1682
     ]
   }
 }
