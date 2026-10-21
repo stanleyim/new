@@ -8,11 +8,11 @@
     "entry_price": 23200.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 23450.0,
-    "current_ret": 0.010775862068965525,
-    "days_held": 4,
+    "current_price": 23400.0,
+    "current_ret": 0.008620689655172376,
+    "days_held": 5,
     "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 6,
+    "bdays_remaining": 5,
     "orig_entry_price": 23250.0
   },
   {
@@ -24,10 +24,10 @@
     "entry_price": 31150.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 29750.0,
-    "current_ret": -0.0449438202247191,
-    "days_held": 2,
+    "current_price": 29500.0,
+    "current_ret": -0.052969502407704705,
+    "days_held": 3,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 8
+    "bdays_remaining": 7
   }
 ]
