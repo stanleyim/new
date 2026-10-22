@@ -279,10 +279,33 @@ def to_5min(df):
                          "close": g["close"].last(), "volume": g["volume"].sum()}).reset_index().rename(columns={"t5": "time"})
 
 
+def day_check(df, k):
+    """1분봉 하루(df)와 KRX 일봉(k) 비교.
+    - 정규장 끝: 보통 15:30. 첫 봉이 10:00 이후인 날(수능일 등 1시간 늦춘 날)은 16:30.
+    - match: 시·고·저·종 정확히 일치
+    - adjusted: 네 값 모두 같은 배율(±1%)로 다름 → KIS 분봉이 수정주가(액면병합·분할 등), KRX는 원주가. 자료 오류 아님
+    - mismatch: 그 밖
+    (10-23 3종목 시험: 000040 액면병합 5:1로 정확히 ×5인 날 176일, 000050 수능일 종가를 15:30에서 끊어 1일 → 이 규칙으로 수정)"""
+    end = "163000" if df["time"].iloc[0] >= "100000" else "153000"
+    reg = df[df["time"] <= end]
+    if not len(reg):
+        return "none"
+    m = [reg["open"].iloc[0], reg["high"].max(), reg["low"].min(), reg["close"].iloc[-1]]
+    x = [k["시가"], k["고가"], k["저가"], k["종가"]]
+    if m == x:
+        return "match"
+    if all(v and v > 0 for v in x) and all(v == v for v in m):
+        r = [a / b for a, b in zip(m, x)]
+        med = sorted(r)[1]
+        if abs(med - 1) > 0.01 and all(abs(v / med - 1) <= 0.01 for v in r):
+            return "adjusted"
+    return "mismatch"
+
+
 def process_ticker(kis, ticker, krx_t):
     """krx_t: 이 종목의 KRX 일봉(거래량>0), 날짜 내림차순."""
     frames, calls, empty_streak, n_empty, errs = [], 0, 0, 0, {}
-    match = mismatch = 0
+    match = adjusted = mismatch = 0
     for _, k in krx_t.iterrows():
         ds = k["date"]
         bars, n, err = fetch_day(kis, ticker, ds)
@@ -298,17 +321,15 @@ def process_ticker(kis, ticker, krx_t):
         empty_streak = 0
         df = bars_to_df(ds, bars)
         frames.append(df)
-        reg = df[df["time"] <= "153000"]
-        if len(reg):
-            ok = (reg["open"].iloc[0] == k["시가"] and reg["high"].max() == k["고가"]
-                  and reg["low"].min() == k["저가"] and reg["close"].iloc[-1] == k["종가"])
-            match += int(ok)
-            mismatch += int(not ok)
+        res = day_check(df, k)
+        match += int(res == "match")
+        adjusted += int(res == "adjusted")
+        mismatch += int(res == "mismatch")
     m1 = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     meta = {"n_days": int(m1["date"].nunique()) if len(m1) else 0,
             "first": str(m1["date"].min()) if len(m1) else None, "last": str(m1["date"].max()) if len(m1) else None,
             "krx_days_tried": int(len(frames) + n_empty), "empty_days": n_empty, "calls": calls,
-            "krx_match": match, "krx_mismatch": mismatch, "errors": errs}
+            "krx_match": match, "krx_adjusted": adjusted, "krx_mismatch": mismatch, "errors": errs}
     return m1, meta
 
 
@@ -346,7 +367,7 @@ def main():
     threading.Thread(target=watch_other_runs, args=(limiter, stop_evt), daemon=True).start()
     kis = Kis(limiter)
 
-    run_done, run_mis, run_match, run_err = 0, 0, 0, 0
+    run_done, run_mis, run_match, run_adj, run_err = 0, 0, 0, 0, 0
     budget_s = TIME_BUDGET_MIN * 60
     it = iter(todo)
     futs = {}
@@ -376,6 +397,7 @@ def main():
                     run_done += 1
                     run_match += meta["krx_match"]
                     run_mis += meta["krx_mismatch"]
+                    run_adj += meta["krx_adjusted"]
                 except Exception as e:
                     run_err += 1
                     prog.setdefault("failed", {})[t] = prog.get("failed", {}).get(t, 0) + 1
@@ -392,10 +414,10 @@ def main():
     prog["last_run_done"] = run_done  # 0이면 워크플로가 자동 재실행하지 않음(같은 오류 무한 반복 방지)
     (OUT / PROG_PATH).write_text(json.dumps(prog, ensure_ascii=False))
     mins = (time.time() - t0) / 60
-    tot = run_match + run_mis
+    tot = run_match + run_adj + run_mis
     msg = [f"📥 분봉 수집 실행 #{prog['runs']}",
            f"이번 {run_done}종목 · 누적 {len(prog['done'])}/{len(tickers)} · 남음 {len(remaining)}",
-           f"KRX 대조(종목·일): 일치 {run_match} · 불일치 {run_mis}" + (f" ({run_mis / tot:.2%})" if tot else ""),
+           f"KRX 대조(종목·일): 일치 {run_match} · 수정주가 {run_adj} · 불일치 {run_mis}" + (f" ({run_mis / tot:.2%})" if tot else ""),
            f"호출 {kis.n_calls} · 한도초과 {kis.n_ratelimit} · 종목 실패 {run_err} · {mins:.0f}분",
            "완료" if prog["completed"] else "10분 뒤 자동 이어서 실행"]
     print("\n".join(msg))
