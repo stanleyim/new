@@ -281,12 +281,12 @@ def to_5min(df):
 
 def day_check(df, k):
     """1분봉 하루(df)와 KRX 일봉(k) 비교.
-    - 정규장 끝: 보통 15:30. 첫 봉이 10:00 이후인 날(수능일 등 1시간 늦춘 날)은 16:30.
+    - 정규장 끝: 보통 15:34:59까지(종가 단일가 연장 대비). 첫 봉이 10:00 이후인 날(수능일 등)은 16:34:59.
     - match: 시·고·저·종 정확히 일치
     - adjusted: 네 값 모두 같은 배율(±1%)로 다름 → KIS 분봉이 수정주가(액면병합·분할 등), KRX는 원주가. 자료 오류 아님
     - mismatch: 그 밖
     (10-23 3종목 시험: 000040 액면병합 5:1로 정확히 ×5인 날 176일, 000050 수능일 종가를 15:30에서 끊어 1일 → 이 규칙으로 수정)"""
-    end = "163000" if df["time"].iloc[0] >= "100000" else "153000"
+    end = "163459" if df["time"].iloc[0] >= "100000" else "153459"  # 종가 단일가가 늦게 끝난 날 대비(예: 000040 2026-05-18 종가봉 15:32)
     reg = df[df["time"] <= end]
     if not len(reg):
         return "none"
@@ -357,8 +357,15 @@ def main():
     tickers = sorted(krx["ticker"].unique())
     if TEST_TICKER_LIMIT:
         tickers = tickers[:int(TEST_TICKER_LIMIT)]
-    todo = [t for t in tickers if t not in prog["done"]
-            and prog.get("failed", {}).get(t, 0) < MAX_TICKER_ATTEMPTS]
+        # 시험 실행은 이미 받은 종목이어도 다시 받는다(코드 수정 후 같은 종목 재시험). 다른 종목 진행 기록은 그대로 둔다.
+        for t in tickers:
+            prog["done"].pop(t, None)
+            prog.get("failed", {}).pop(t, None)
+    if TEST_TICKER_LIMIT:
+        todo = list(tickers)  # 시험 실행은 이미 받은 종목도 다시 받는다(같은 종목으로 재시험 가능하게)
+    else:
+        todo = [t for t in tickers if t not in prog["done"]
+                and prog.get("failed", {}).get(t, 0) < MAX_TICKER_ATTEMPTS]
     print(f"[INFO] 종목 {len(tickers)}, 완료 {len(prog['done'])}, 이번 대상 {len(todo)}")
     by_t = {t: g.sort_values("date", ascending=False) for t, g in krx.groupby("ticker")}
 
