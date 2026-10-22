@@ -2,7 +2,7 @@ name: Minute Collect (분봉 전 종목)
 
 # New5 분봉 전 종목 수집 (2026-10-23). 수동 시작 1회 → 끝날 때까지 10분 간격 자동 이어서 실행.
 # 5분봉 = minute-data 브랜치, 1분봉 원본 = 릴리스 minute-1m (실행마다 zip 1개).
-# main 브랜치에는 아무것도 커밋하지 않음.
+# main 브랜치에는 아무것도 커밋하지 않음. (10-23 재업로드: 등록 재처리용, 동작 동일)
 on:
   workflow_dispatch:
     inputs:
