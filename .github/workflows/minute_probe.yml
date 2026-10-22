@@ -1,0 +1,47 @@
+name: Minute Probe (분봉 1종목 실측)
+
+# New5 분봉 실측 테스트 (2026-10-22 승인). 수동 실행만. 레포에 아무것도 커밋하지 않음.
+# 결과 = 텔레그램 요약 + artifact(minute_probe_out). 20:17 KST 정규 실행과 겹치지 않게 실행할 것.
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "종목코드 (기본 005930)"
+        required: false
+        default: "005930"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: minute-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests pandas pyarrow pykrx
+      - name: Run probe
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          PROBE_TICKER: ${{ github.event.inputs.ticker }}
+        run: python minute_probe.py
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minute_probe_out
+          path: minute_probe_out
+          retention-days: 30
