@@ -1,0 +1,29 @@
+{
+  "signal_date": "2026-10-23",
+  "n_signals": 1,
+  "records": [
+    {
+      "signal_date": "2026-10-23",
+      "ticker": "028050",
+      "name": "삼성E&A",
+      "signal_score": 7.84,
+      "n_signals": 5,
+      "SIG1": 1,
+      "SIG2": 1,
+      "SIG3": 1,
+      "SIG4": 0,
+      "SIG5": 0,
+      "SIG6": 1,
+      "SIG7": 1,
+      "cap_class": "대형",
+      "signal_close": 59800.0,
+      "virtual_entry_date": null,
+      "virtual_entry_price": null,
+      "virtual_exit_date_planned": null,
+      "virtual_exit_price": null,
+      "gross_ret": null,
+      "net_ret": null,
+      "status": "pending"
+    }
+  ]
+}

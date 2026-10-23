@@ -10,9 +10,9 @@
     "weight": 0.25,
     "current_price": 22650.0,
     "current_ret": -0.023706896551724088,
-    "days_held": 6,
+    "days_held": 7,
     "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 4,
+    "bdays_remaining": 3,
     "orig_entry_price": 23250.0
   },
   {
@@ -24,10 +24,23 @@
     "entry_price": 31150.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 29600.0,
-    "current_ret": -0.049759229534510396,
-    "days_held": 4,
+    "current_price": 29900.0,
+    "current_ret": -0.0401284109149278,
+    "days_held": 5,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 6
+    "bdays_remaining": 5
+  },
+  {
+    "entry_date": "2026-10-23",
+    "ticker": "028050",
+    "name": "삼성E&A",
+    "signal_score": 7.84,
+    "n_signals": 5,
+    "entry_price": null,
+    "exit_date_planned": null,
+    "weight": 0.25,
+    "current_price": null,
+    "current_ret": null,
+    "days_held": 0
   }
 ]
