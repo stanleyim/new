@@ -1,0 +1,63 @@
+name: Overnight Paper (밤사이 모의 시험)
+
+# New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v3.md). 평일 16:30 KST 자동 + 수동 실행.
+# main 브랜치 overnight_paper/ 폴더에만 커밋. 기존 워크플로·코드는 건드리지 않음.
+on:
+  schedule:
+    - cron: "30 7 * * 1-5"   # UTC 07:30 = KST 16:30, 월~금
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: overnight-paper
+  cancel-in-progress: false
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests pandas pyarrow pykrx
+
+      - name: Seed KRX daily (첫 실행만, minute-data 브랜치에서 복사)
+        run: |
+          mkdir -p overnight_paper
+          if [ ! -f overnight_paper/krx_daily.parquet ]; then
+            git fetch --depth 1 origin minute-data
+            git show origin/minute-data:minute_data/krx_daily.parquet > overnight_paper/krx_daily.parquet
+            ls -la overnight_paper
+          fi
+
+      - name: Run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          PYTHONUNBUFFERED: "1"
+        run: python overnight_paper.py
+
+      - name: Commit overnight_paper
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+          git add overnight_paper
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -q -m "Overnight paper $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for i in 1 2 3; do
+              git pull -q --rebase origin main && git push -q origin HEAD:main && break
+              sleep 10
+            done
+          fi
