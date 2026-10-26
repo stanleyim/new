@@ -1,11 +1,11 @@
 name: Overnight Paper (밤사이 모의 시험)
 
-# New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v4.md). 평일 18:52 KST 자동 + 수동 실행.
-# 18:52 = 시간외 거래(~18:00) 끝난 뒤 → KRX 거래량 최종값으로 순위 계산(백테스트 자료와 같은 기준).
+# New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v4.md). 평일 21:22 KST 자동 + 수동 실행.
+# 21:22 = KRX 애프터마켓(16:00~20:00, 9-14 개장) 끝난 뒤 → KRX 일봉은 장중 실시간 갱신이므로 마감 뒤에 받아야 거래량 최종값(백테스트 자료와 같은 기준). 10-26 확인.
 # main 브랜치 overnight_paper/ 폴더에만 커밋. 기존 워크플로·코드는 건드리지 않음.
 on:
   schedule:
-    - cron: "52 9 * * 1-5"   # UTC 09:52 = KST 18:52, 월~금
+    - cron: "22 12 * * 1-5"  # UTC 12:22 = KST 21:22, 월~금
   workflow_dispatch:
 
 permissions:
