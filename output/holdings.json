@@ -8,11 +8,11 @@
     "entry_price": 23200.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 22650.0,
-    "current_ret": -0.023706896551724088,
-    "days_held": 7,
+    "current_price": 22550.0,
+    "current_ret": -0.028017241379310387,
+    "days_held": 8,
     "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 3,
+    "bdays_remaining": 2,
     "orig_entry_price": 23250.0
   },
   {
@@ -24,11 +24,11 @@
     "entry_price": 31150.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 29900.0,
-    "current_ret": -0.0401284109149278,
-    "days_held": 5,
+    "current_price": 28550.0,
+    "current_ret": -0.0834670947030498,
+    "days_held": 6,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 5
+    "bdays_remaining": 4
   },
   {
     "entry_date": "2026-10-23",
@@ -36,11 +36,13 @@
     "name": "삼성E&A",
     "signal_score": 7.84,
     "n_signals": 5,
-    "entry_price": null,
+    "entry_price": 59800.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": null,
-    "current_ret": null,
-    "days_held": 0
+    "current_price": 59800.0,
+    "current_ret": 0.0,
+    "days_held": 1,
+    "entry_t1_date": "2026-10-26",
+    "bdays_remaining": 9
   }
 ]
