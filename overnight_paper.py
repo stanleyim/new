@@ -10,6 +10,10 @@ New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v3.md)
 
 자료: overnight_paper/krx_daily.parquet (첫 실행 전 워크플로가 minute-data 브랜치에서 복사).
 매 실행: 빠진 날짜 KRX 일봉 보충 → 지난 매수 정산 → 매수 기록(빠진 날 포함) → 다음 매수일 명단 → 텔레그램.
+
+ETF 밤사이 모의(10-27 추가): KODEX 200·ACE 200, 매수일 종가 → 다음 거래일 시가, 왕복 비용 0.006%(거래세 없음).
+다음 거래일이 월요일이면 쉼. 10-26 매수분부터. 가격은 KRX 날짜별 전 ETF 조회(정규장 값)를
+overnight_paper/etf_daily.csv에 저장. ETF 부분이 실패해도 주식 모의는 그대로 진행(경고 한 줄).
 """
 import os
 import sys
@@ -31,6 +35,9 @@ TEST_START, TEST_END, TEST_N = "20261026", "20261203", 22
 NO_BUY = {"20261118", "20261119"}                       # 수능 전날·당일
 FUTURE_HOLIDAYS = {"20261225", "20261231", "20270101"}  # 자료에 아직 없는 날의 다음 거래일 판단용
 RETRY_TODAY, RETRY_WAIT = int(os.environ.get("RETRY_TODAY", "6")), int(os.environ.get("RETRY_WAIT", "600"))
+ETF_TICKERS = {"069500": "KODEX 200", "105190": "ACE 200"}
+ETF_START, ETF_COST = "20261026", 0.00006
+ETF_PATH = BASE / "etf_daily.csv"
 COLS = ["buy_date", "ticker", "rank", "kind", "buy_close", "status", "sell_date", "sell_open", "ret"]
 
 
@@ -225,6 +232,70 @@ def fmt_pct(v, nd=2):
     return f"{v:+.{nd}%}"
 
 
+# ---------------- ETF 밤사이 ----------------
+def update_etf(cal):
+    """ETF_START 이후 주식 달력의 거래일 중 etf_daily.csv에 없는 날을 KRX 날짜별 전 ETF 조회로 보충."""
+    from pykrx import stock
+    if ETF_PATH.exists():
+        e = pd.read_csv(ETF_PATH, dtype={"date": str, "ticker": str})
+    else:
+        e = pd.DataFrame(columns=["date", "ticker", "시가", "종가"])
+    have = set(e["date"])
+    rows = []
+    for ds in [d for d in cal if d >= ETF_START and d not in have]:
+        last = None
+        for k in range(3):
+            try:
+                x = stock.get_etf_ohlcv_by_ticker(ds)
+                break
+            except Exception as ex:
+                last = ex
+                time.sleep(2 + 2 * k)
+        else:
+            raise RuntimeError(f"ETF 조회 실패 {ds}: {type(last).__name__}: {str(last)[:150]}")
+        for t in ETF_TICKERS:
+            if x is not None and t in x.index:
+                o, c = float(x.at[t, "시가"]), float(x.at[t, "종가"])
+                if o > 0 and c > 0:
+                    rows.append({"date": ds, "ticker": t, "시가": o, "종가": c})
+    if rows:
+        e = pd.concat([e, pd.DataFrame(rows)], ignore_index=True)
+    e = e.drop_duplicates(["date", "ticker"], keep="last").sort_values(["date", "ticker"]).reset_index(drop=True)
+    e.to_csv(ETF_PATH, index=False)
+    return e
+
+
+def etf_nights(e, cal):
+    """ETF별 (매수일, 매도일, 순수익) 목록. 다음 거래일이 월요일인 밤은 쉼."""
+    out = {}
+    for t in ETF_TICKERS:
+        s = e[e["ticker"] == t].set_index("date")
+        rs = []
+        for i, d in enumerate(cal[:-1]):
+            nd = cal[i + 1]
+            if d < ETF_START or dt.datetime.strptime(nd, "%Y%m%d").weekday() == 0:
+                continue
+            if d in s.index and nd in s.index:
+                rs.append((d, nd, float(s.at[nd, "시가"]) / float(s.at[d, "종가"]) - 1 - ETF_COST))
+        out[t] = rs
+    return out
+
+
+def etf_lines(nights, cal):
+    L = ["\n📈 ETF 밤사이 모의 (종가 매수 → 다음날 시가 매도, 비용 0.006%)"]
+    for t, nm in ETF_TICKERS.items():
+        rs = nights.get(t, [])
+        if not rs:
+            L.append(f"  {nm}: 아직 정산 없음")
+            continue
+        eq = np.concatenate([[1.0], np.cumprod([1 + r for _, _, r in rs])])
+        mdd = (eq / np.maximum.accumulate(eq) - 1).min()
+        b, sd, r = rs[-1]
+        last = f"{b[4:6]}-{b[6:]}→{sd[4:6]}-{sd[6:]} {fmt_pct(r)}" if sd == cal[-1] else "오늘 정산 없음(쉼)"
+        L.append(f"  {nm}: {last} · 누적 {len(rs)}밤 {fmt_pct(eq[-1] - 1)} · MDD {mdd:.2%}")
+    return L
+
+
 def names_of(tks):
     try:
         from pykrx import stock
@@ -276,6 +347,15 @@ def main():
     sh = dly[dly["kind"] == "그림자"]
     if len(sh):
         lines.append(f"그림자 누적 {len(sh)}회 · 평균 {fmt_pct(sh['net'].mean(), 3)}")
+    try:
+        lines += etf_lines(etf_nights(update_etf(cal), cal), cal)
+        if not today_missing:
+            nb = next_trading(cal[-1], cal)
+            nd = dt.datetime.strptime(next_trading(nb, cal), "%Y%m%d").date()
+            lines.append(f"  {nb[4:6]}-{nb[6:]}: " + ("쉼 (다음 거래일 월요일)" if nd.weekday() == 0 else "종가 동시호가 매수"))
+    except Exception as ex:
+        log(f"[WARN] ETF 부분 실패: {type(ex).__name__}: {ex}")
+        lines.append(f"\n⚠️ ETF 모의 실패({type(ex).__name__}) → 다음 실행에서 보충")
 
     if not today_missing:
         nb = next_trading(cal[-1], cal)
