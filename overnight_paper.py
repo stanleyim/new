@@ -9,6 +9,7 @@ New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v3.md)
 판정: 정식 매수일 10-26~12-03(22회) 하루 순수익 평균 ≥ +0.1% 그리고 6주 중 4주 이상 플러스.
 
 자료: overnight_paper/krx_daily.parquet (첫 실행 전 워크플로가 minute-data 브랜치에서 복사).
+기준일: 실행 시각이 KST 21시 전이면 전날(10-28 추가, 예약 실행이 새벽으로 밀려도 같은 결과).
 매 실행: 빠진 날짜 KRX 일봉 보충 → 지난 매수 정산 → 매수 기록(빠진 날 포함) → 다음 매수일 명단 → 텔레그램.
 
 ETF 밤사이 모의(10-27 추가): KODEX 200·ACE 200, 매수일 종가 → 다음 거래일 시가, 왕복 비용 0.006%(거래세 없음).
@@ -34,6 +35,8 @@ LIMIT_UP, CA_ABS = 0.295, 0.30
 TEST_START, TEST_END, TEST_N = "20261026", "20261203", 22
 NO_BUY = {"20261118", "20261119"}                       # 수능 전날·당일
 FUTURE_HOLIDAYS = {"20261225", "20261231", "20270101"}  # 자료에 아직 없는 날의 다음 거래일 판단용
+DATA_READY_HOUR_KST = 21  # 10-28: GitHub 예약 실행이 새벽(03시대 KST)으로 밀림 → 이 시각 전이면 '전날'을 오늘로 봄
+                          # (v8.6 signal_runner.py DATA_READY_HOUR_KST 방식과 같음. 21 = 애프터마켓 20:00 마감 뒤, 예약 21:22)
 RETRY_TODAY, RETRY_WAIT = int(os.environ.get("RETRY_TODAY", "6")), int(os.environ.get("RETRY_WAIT", "600"))
 ETF_TICKERS = {"069500": "KODEX 200", "105190": "ACE 200"}
 ETF_START, ETF_COST = "20261026", 0.00006
@@ -43,6 +46,12 @@ COLS = ["buy_date", "ticker", "rank", "kind", "buy_close", "status", "sell_date"
 
 def now_kst():
     return dt.datetime.now(KST)
+
+
+def data_day():
+    """자료 기준일(KST). DATA_READY_HOUR_KST 전이면 전날, 이후면 당일."""
+    n = now_kst()
+    return n.date() if n.hour >= DATA_READY_HOUR_KST else n.date() - dt.timedelta(days=1)
 
 
 def log(msg):
@@ -307,7 +316,8 @@ def names_of(tks):
 
 def main():
     today = (dt.datetime.strptime(os.environ["OP_TODAY"], "%Y%m%d").date()
-             if os.environ.get("OP_TODAY") else now_kst().date())
+             if os.environ.get("OP_TODAY") else data_day())
+    log(f"[INFO] 실행 {now_kst():%Y-%m-%d %H:%M} KST · 자료 기준일 {today:%Y-%m-%d} ({DATA_READY_HOUR_KST}시 전이면 전날)")
     if not KRX_PATH.exists():
         raise SystemExit(f"{KRX_PATH} 없음 (워크플로 복사 단계 확인)")
     k = pd.read_parquet(KRX_PATH)
