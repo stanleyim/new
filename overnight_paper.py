@@ -2,7 +2,8 @@
 New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v3.md)
 
 규칙(고정): KRX 일봉 거래대금(종가×거래량) 20거래일 평균(거래 없는 날 0) 상위 20종목,
-매수일 종가 동시호가 매수 → 다음 거래일 시초가 매도, 같은 금액, 왕복 비용 0.203%.
+매수일 KRX 일봉 종가 매수(9-14 이후 = 20:00 애프터마켓 마지막 체결가) → 다음 거래일 09:00 시가 동시호가 매도,
+같은 금액, 왕복 비용 0.206%(거래세 0.2% + 수수료 편도 0.003%×2, 10-28 0.203%에서 정정).
 순위는 매수일 전날까지 자료만. 다음 거래일이 월요일인 날은 '그림자'(판정 제외 기록),
 수능 전날·당일(11-18, 11-19)은 매수 없음. 매수일 상한가(+29.5% 이상) 종목·매도일 시가 없는 종목·
 |밤사이| ≥ 30%(권리 변경) 종목은 그날 평균에서 제외하고 표시.
@@ -12,9 +13,13 @@ New5 밤사이 모의 시험 (계획서 New5_overnight_paper_plan_v3.md)
 기준일: 실행 시각이 KST 21시 전이면 전날(10-28 추가, 예약 실행이 새벽으로 밀려도 같은 결과).
 매 실행: 빠진 날짜 KRX 일봉 보충 → 지난 매수 정산 → 매수 기록(빠진 날 포함) → 다음 매수일 명단 → 텔레그램.
 
-ETF 밤사이 모의(10-27 추가): KODEX 200·ACE 200, 매수일 종가 → 다음 거래일 시가, 왕복 비용 0.006%(거래세 없음).
+ETF 밤사이 모의(10-27 추가): KODEX 200·ACE 200, 매수일 15:30 종가 동시호가 → 다음 거래일 09:00 시가 동시호가,
+왕복 비용 0.006%(거래세 없음).
 다음 거래일이 월요일이면 쉼. 10-26 매수분부터. 가격은 KRX 날짜별 전 ETF 조회(정규장 값)를
 overnight_paper/etf_daily.csv에 저장. ETF 부분이 실패해도 주식 모의는 그대로 진행(경고 한 줄).
+
+가격 기준 확인(10-28, KIS 분봉 KRX 대조, 문구만 반영·계산 불변): ETF 종가 = 15:30 종가 동시호가(KRX 애프터마켓 ETF 제외),
+주식 종가 = 20:00 애프터마켓 마지막 체결가(9-14 이후), 일봉 시가 = 09:00 시가 동시호가(ETF·주식 공통).
 """
 import os
 import sys
@@ -30,7 +35,7 @@ KST = dt.timezone(dt.timedelta(hours=9))
 BASE = Path(os.environ.get("OP_DIR", "overnight_paper"))
 KRX_PATH = BASE / "krx_daily.parquet"
 TRADES_PATH = BASE / "trades.csv"
-COST, TOPN, WIN = 0.00203, 20, 20
+COST, TOPN, WIN = 0.00206, 20, 20
 LIMIT_UP, CA_ABS = 0.295, 0.30
 TEST_START, TEST_END, TEST_N = "20261026", "20261203", 22
 NO_BUY = {"20261118", "20261119"}                       # 수능 전날·당일
@@ -291,7 +296,7 @@ def etf_nights(e, cal):
 
 
 def etf_lines(nights, cal):
-    L = ["\n📈 ETF 밤사이 모의 (종가 매수 → 다음날 시가 매도, 비용 0.006%)"]
+    L = ["\n📈 ETF 밤사이 모의 (15:30 종가 동시호가 매수 → 다음날 09:00 시가 동시호가 매도, 비용 0.006%)"]
     for t, nm in ETF_TICKERS.items():
         rs = nights.get(t, [])
         if not rs:
@@ -362,7 +367,7 @@ def main():
         if not today_missing:
             nb = next_trading(cal[-1], cal)
             nd = dt.datetime.strptime(next_trading(nb, cal), "%Y%m%d").date()
-            lines.append(f"  {nb[4:6]}-{nb[6:]}: " + ("쉼 (다음 거래일 월요일)" if nd.weekday() == 0 else "종가 동시호가 매수"))
+            lines.append(f"  {nb[4:6]}-{nb[6:]}: " + ("쉼 (다음 거래일 월요일)" if nd.weekday() == 0 else "15:30 종가 동시호가 매수"))
     except Exception as ex:
         log(f"[WARN] ETF 부분 실패: {type(ex).__name__}: {ex}")
         lines.append(f"\n⚠️ ETF 모의 실패({type(ex).__name__}) → 다음 실행에서 보충")
@@ -376,8 +381,8 @@ def main():
         else:
             lst = top_list(tv20, cal[-1])
             nm = names_of([t for t, _ in lst])
-            head = "정식 — 종가 동시호가 매수, 다음 거래일 시가 매도" if kd == "정식" else "그림자 — 실제로 사지 않음(다음 거래일 월요일)"
-            lines.append(f"\n{nb_s} 매수 명단 [{head}] · 15:20에 상한가 근처면 제외")
+            head = "정식 — 20:00 마지막 체결가 매수, 다음 거래일 09:00 시가 동시호가 매도" if kd == "정식" else "그림자 — 실제로 사지 않음(다음 거래일 월요일)"
+            lines.append(f"\n{nb_s} 매수 명단 [{head}] · 매수 시점 상한가 근처면 제외")
             lines += [f"{r:>2}. {t} {nm.get(t, '')}" for t, r in lst]
     send_telegram("\n".join(lines))
     log("\n".join(lines))
