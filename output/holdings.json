@@ -6,13 +6,13 @@
     "signal_score": 6.28,
     "n_signals": 4,
     "entry_price": 23200.0,
-    "exit_date_planned": null,
+    "exit_date_planned": "2026-10-28",
     "weight": 0.25,
-    "current_price": 22400.0,
-    "current_ret": -0.03448275862068961,
-    "days_held": 9,
+    "current_price": 22150.0,
+    "current_ret": -0.04525862068965514,
+    "days_held": 10,
     "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 1,
+    "bdays_remaining": 0,
     "orig_entry_price": 23250.0
   },
   {
@@ -24,11 +24,11 @@
     "entry_price": 31150.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 29250.0,
-    "current_ret": -0.0609951845906902,
-    "days_held": 7,
+    "current_price": 29600.0,
+    "current_ret": -0.049759229534510396,
+    "days_held": 8,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 3
+    "bdays_remaining": 2
   },
   {
     "entry_date": "2026-10-23",
@@ -39,10 +39,10 @@
     "entry_price": 59800.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 62200.0,
-    "current_ret": 0.04013377926421402,
-    "days_held": 2,
+    "current_price": 64200.0,
+    "current_ret": 0.0735785953177257,
+    "days_held": 3,
     "entry_t1_date": "2026-10-26",
-    "bdays_remaining": 8
+    "bdays_remaining": 7
   }
 ]
