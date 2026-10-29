@@ -1,21 +1,5 @@
 [
   {
-    "entry_date": "2026-10-14 00:00:00",
-    "ticker": "011200",
-    "name": "HMM",
-    "signal_score": 6.28,
-    "n_signals": 4,
-    "entry_price": 23200.0,
-    "exit_date_planned": "2026-10-28",
-    "weight": 0.25,
-    "current_price": 22150.0,
-    "current_ret": -0.04525862068965514,
-    "days_held": 10,
-    "entry_t1_date": "2026-10-15",
-    "bdays_remaining": 0,
-    "orig_entry_price": 23250.0
-  },
-  {
     "entry_date": "2026-10-16",
     "ticker": "009470",
     "name": "삼화전기",
@@ -24,11 +8,11 @@
     "entry_price": 31150.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 29600.0,
-    "current_ret": -0.049759229534510396,
-    "days_held": 8,
+    "current_price": 31200.0,
+    "current_ret": 0.0016051364365972098,
+    "days_held": 9,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 2
+    "bdays_remaining": 1
   },
   {
     "entry_date": "2026-10-23",
@@ -39,10 +23,10 @@
     "entry_price": 59800.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 64200.0,
-    "current_ret": 0.0735785953177257,
-    "days_held": 3,
+    "current_price": 62800.0,
+    "current_ret": 0.050167224080267525,
+    "days_held": 4,
     "entry_t1_date": "2026-10-26",
-    "bdays_remaining": 7
+    "bdays_remaining": 6
   }
 ]
