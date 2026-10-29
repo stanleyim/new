@@ -20,7 +20,13 @@ overnight_paper/etf_daily.csv에 저장. ETF 부분이 실패해도 주식 모�
 
 가격 기준 확인(10-28, KIS 분봉 KRX 대조, 문구만 반영·계산 불변): ETF 종가 = 15:30 종가 동시호가(KRX 애프터마켓 ETF 제외),
 주식 종가 = 20:00 애프터마켓 마지막 체결가(9-14 이후), 일봉 시가 = 09:00 시가 동시호가(ETF·주식 공통).
+
+LINE(10-29 추가, 표시 전용·계산 불변): 텔레그램은 그대로 전체. LINE 그룹에는 ETF 부분만(실행일 1줄 + 📈 블록).
+signal_runner.py(v8.5)와 같은 방식(LINE_CHANNEL_TOKEN·LINE_GROUP_ID, push API). LINE 실패는 실행·저장·텔레그램에 영향 없음,
+실패하면 텔레그램에 경고 1줄. 환경변수가 없으면 LINE만 건너뜀.
 """
+import json
+import uuid
 import os
 import sys
 import time
@@ -75,6 +81,37 @@ def send_telegram(text):
             log(f"[WARN] Telegram 실패 {r.status_code} {r.text[:200]}")
     except requests.exceptions.RequestException as e:
         log(f"[WARN] Telegram 오류 {e}")
+
+
+LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
+
+
+def send_line(text):
+    """LINE 그룹으로 텍스트 1건. 성공 True / 실패 False / 미설정 None. 예외는 밖으로 내지 않음.
+    네트워크 오류·5xx는 같은 retry-key로 1회 재시도(중복 전송 방지), 4xx는 재시도 안 함."""
+    token, gid = os.environ.get("LINE_CHANNEL_TOKEN"), os.environ.get("LINE_GROUP_ID")
+    if not token or not gid:
+        log("[INFO] LINE 환경변수 없음, LINE 전송 생략")
+        return None
+    try:
+        body = json.dumps({"to": gid, "messages": [{"type": "text", "text": text[:4800]}]}, ensure_ascii=False).encode("utf-8")
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                   "X-Line-Retry-Key": str(uuid.uuid4())}
+        for attempt in (1, 2):
+            try:
+                r = requests.post(LINE_PUSH_URL, headers=headers, data=body, timeout=30)
+            except requests.exceptions.RequestException as e:
+                log(f"[WARN] LINE 요청 오류({attempt}/2): {type(e).__name__}")
+                continue
+            if r.status_code == 200:
+                log("LINE 전송 완료")
+                return True
+            log(f"[WARN] LINE 실패({attempt}/2): {r.status_code} {r.text[:200]}")
+            if r.status_code < 500:
+                break
+    except Exception as e:
+        log(f"[WARN] LINE 처리 중 예외: {type(e).__name__}: {str(e)[:150]}")
+    return False
 
 
 # ---------------- KRX 일봉 ----------------
@@ -362,6 +399,7 @@ def main():
     sh = dly[dly["kind"] == "그림자"]
     if len(sh):
         lines.append(f"그림자 누적 {len(sh)}회 · 평균 {fmt_pct(sh['net'].mean(), 3)}")
+    etf_from = len(lines)
     try:
         lines += etf_lines(etf_nights(update_etf(cal), cal), cal)
         if not today_missing:
@@ -371,6 +409,7 @@ def main():
     except Exception as ex:
         log(f"[WARN] ETF 부분 실패: {type(ex).__name__}: {ex}")
         lines.append(f"\n⚠️ ETF 모의 실패({type(ex).__name__}) → 다음 실행에서 보충")
+    etf_block = [ln.lstrip("\n") for ln in lines[etf_from:]]
 
     if not today_missing:
         nb = next_trading(cal[-1], cal)
@@ -386,6 +425,8 @@ def main():
             lines += [f"{r:>2}. {t} {nm.get(t, '')}" for t, r in lst]
     send_telegram("\n".join(lines))
     log("\n".join(lines))
+    if send_line("\n".join([f"🌙 밤사이 모의 · {today:%m-%d} 실행"] + etf_block)) is False:
+        send_telegram("⚠️ LINE 전송 실패 (ETF 밤사이 모의) — 텔레그램은 정상입니다. Actions 로그 확인 (그룹ID·토큰·월 한도)")
     if today_missing:
         sys.exit(1)
 
