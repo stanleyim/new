@@ -6,13 +6,13 @@
     "signal_score": 4.359999999999999,
     "n_signals": 3,
     "entry_price": 31150.0,
-    "exit_date_planned": null,
+    "exit_date_planned": "2026-10-30",
     "weight": 0.25,
-    "current_price": 31200.0,
-    "current_ret": 0.0016051364365972098,
-    "days_held": 9,
+    "current_price": 30400.0,
+    "current_ret": -0.024077046548956704,
+    "days_held": 10,
     "entry_t1_date": "2026-10-19",
-    "bdays_remaining": 1
+    "bdays_remaining": 0
   },
   {
     "entry_date": "2026-10-23",
@@ -23,10 +23,10 @@
     "entry_price": 59800.0,
     "exit_date_planned": null,
     "weight": 0.25,
-    "current_price": 62800.0,
-    "current_ret": 0.050167224080267525,
-    "days_held": 4,
+    "current_price": 61700.0,
+    "current_ret": 0.03177257525083621,
+    "days_held": 5,
     "entry_t1_date": "2026-10-26",
-    "bdays_remaining": 6
+    "bdays_remaining": 5
   }
 ]
