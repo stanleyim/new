@@ -1,0 +1,26 @@
+name: KIS Night Probe (야간선물 조회 시험)
+
+# 한 번만 수동 실행. 읽기 전용(주문 없음), 레포에 아무것도 쓰지 않음. 결과는 실행 로그에만 출력.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests
+      - name: Run
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          PYTHONUNBUFFERED: "1"
+        run: python kis_night_probe.py
