@@ -1,0 +1,62 @@
+name: Night Backfill (선물 밤 지난 날 채우기)
+
+# 한 번만 쓰는 수동 실행. 주문 없음. night_alert/futures_night.csv에 지난 날짜를 채우고 커밋.
+# 계산은 night_alert.py와 같음(그 파일의 함수를 씀). 날짜마다 그때의 최근월물 코드로 조회.
+# start 비우면 20251212, end 비우면 야간장이 끝난 마지막 날. 이미 있는 날짜는 건너뜀.
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "시작일 YYYYMMDD (비우면 20251212)"
+        required: false
+        default: ""
+      end:
+        description: "끝일 YYYYMMDD (비우면 야간장이 끝난 마지막 날)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: night-alert
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests
+      - name: Run
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BF_START: ${{ inputs.start }}
+          BF_END: ${{ inputs.end }}
+          PYTHONUNBUFFERED: "1"
+        run: python night_backfill.py
+
+      - name: Commit night_alert
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+          mkdir -p night_alert
+          git add night_alert
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -q -m "Night backfill $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for i in 1 2 3; do
+              git pull -q --rebase origin main && git push -q origin HEAD:main && break
+              sleep 10
+            done
+          fi
