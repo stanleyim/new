@@ -1,0 +1,57 @@
+name: Night Alert (08:30 밤사이 관찰)
+
+# 관찰용 텔레그램 1통. 주문 없음. 11-04부터 계산 값을 night_alert/futures_night.csv에 한 줄 저장(커밋).
+# 실행: cron-job.org가 평일 08:30 KST에 workflow_dispatch로 호출. GitHub 예약(schedule)은 쓰지 않음(4~9시간 밀려 08:30 의미 없음).
+# 지난 날 채우기: Actions 화면 수동 실행 때 today에 YYYYMMDD 입력(그날 기준 직전 거래일 밤). 비우면 오늘.
+on:
+  workflow_dispatch:
+    inputs:
+      today:
+        description: "기준 오늘 YYYYMMDD (비우면 오늘)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: night-alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install requests
+      - name: Run
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NA_TODAY: ${{ inputs.today }}
+          PYTHONUNBUFFERED: "1"
+        run: python night_alert.py
+
+      - name: Commit night_alert
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "imroetaeck@gmail.com"
+          mkdir -p night_alert
+          git add night_alert
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -q -m "Night alert $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            for i in 1 2 3; do
+              git pull -q --rebase origin main && git push -q origin HEAD:main && break
+              sleep 10
+            done
+          fi
