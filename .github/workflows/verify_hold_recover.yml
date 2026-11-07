@@ -1,0 +1,26 @@
+name: Verify Hold Recover (시가<매수가면 본전 지정가)
+
+# 한 번만 수동 실행. 읽기 전용(주문 없음), 레포에 아무것도 쓰지 않음. 결과는 실행 로그에만 출력.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install pandas pykrx
+      - name: Run
+        env:
+          KRX_ID: ${{ secrets.KRX_ID }}
+          KRX_PW: ${{ secrets.KRX_PW }}
+          PYTHONUNBUFFERED: "1"
+        run: python verify_hold_recover.py
